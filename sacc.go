@@ -192,18 +192,18 @@ func generatorContract(stub shim.ChaincodeStubInterface, args []string) error {
 	stub.PutState(args[0] + "_contract", []byte(key))
 	antiCheatIds :=  strings.Split(args[1], ",")
 	for _, value := range antiCheatIds {
-		stub.PutState(value + "_contract", []byte(key))
+	  stub.PutState(value + "_contract", key)
 	}
 	return nil
 }
 
 // get contract msg according to contract id
-func getContract(stub shim.ChaincodeStubInterface, contractId string) (string, error) {
+func getContract(contractId string) (string, error) {
 	sc, err := stub.GetState(contractId)
 	if err != nil {
 		return "", err
 	}
-	return string(sc),nil
+	return sc,nil
 }
 
 // getContractList get history contracts of media or anticheat
@@ -218,7 +218,8 @@ func getContractList(stub shim.ChaincodeStubInterface, args []string) (string, e
 	}
 
 	resultList :=getHistoryListResult(it)
-	return strings.Join(resultList, "\n"), nil
+	return string(result), nil
+
 }
 
 func getHistoryListResult(resultsIterator shim.HistoryQueryIteratorInterface) []string {
@@ -226,14 +227,16 @@ func getHistoryListResult(resultsIterator shim.HistoryQueryIteratorInterface) []
 	defer resultsIterator.Close()
 
     s:= make([]string, 0, 10)
-	// bArrayMemberAlreadyWritten := false
+
+	bArrayMemberAlreadyWritten := false
+
 	for resultsIterator.HasNext() {
 		queryResponse, err := resultsIterator.Next()
 		if err != nil {
 			continue
 		}
 		item, _ := json.Marshal(queryResponse)
-        s=append(s,string(item))
+
 	}
     return s
 }
@@ -295,7 +298,7 @@ func getLogList(stub shim.ChaincodeStubInterface, args []string) (string, error)
 	}
 
 	resultList := getHistoryListResult(it)
-	return strings.Join(resultList, "\n"), nil
+
 }
 
 // args[0]:log id

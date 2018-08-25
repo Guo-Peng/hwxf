@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"time"
+	"strings"
+	"encoding/json"
 	"github.com/hyperledger/fabric/core/chaincode/lib/cid"
 	"github.com/hyperledger/fabric/core/chaincode/shim"
 	"github.com/hyperledger/fabric/protos/peer"
@@ -11,6 +13,13 @@ import (
 
 // SimpleAsset implements a simple chaincode to manage an asset
 type SimpleAsset struct {
+}
+
+type Account struct {
+	Type string `json:"type"`
+	Credit string `json:"credit"`
+	Assets string `json:"assets"`
+	PublicKey string `json:"public_key"`
 }
 
 type Contract struct {
@@ -38,7 +47,7 @@ type Log struct {
 	Address                string
 	TimeStamp              int64
 	AntiCheatResultAddress []string
-	AntiCheatNum           int64
+	AntiCheatNum           int
 }
 
 type MediaLogSubmit struct {
@@ -55,21 +64,80 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 	var result string
 	var err error
 
-	if fn == "mediaSubmit" {
-		err = submit(stub, args)
-	} else if fn == "contractList" {
-		result, err = contractList(stub, args)
-	} else if fn == "contractGenerator" {
-		err = ContractGenerator(stub, args)
+	if fn == "setAccount" {
+		result, err = setAccount(stub, args)
+	} else if fn == "getAccountPublicKey" {
+		result, err = getAccountPublicKey(stub, args)
+	} else if fn == "generatorContract" {
+		err = generatorContract(stub, args)
+	} else if fn == "mediaSubmit" {
+		err = mediaSubmit(stub, args)
+	} else if fn == "getContract" {
+		result, err = getContractList(stub, args)
+	} else if fn == "getContractList" {
+		result, err = getContractList(stub, args)
+	} else if fn == "getLogList" {
+		result, err = getLogList(stub, args)
 	}
-
+	
 	if err != nil {
 		return shim.Error(err.Error())
 	}
 	return shim.Success([]byte(result))
 }
+/* ---------------------链码区域---------------------------*/
+/*
+* 0: Credit
+* 1: Assets
+* 2: PublicKey
+*/
+func setAccount(stub shim.ChaincodeStubInterface, args []string) (string, error) {
 
-func ContractInit(args []string, timeStamp int64, advertiserId string) Contract {
+	if len(args) != 3 {
+		return "", fmt.Errorf("Incorrect number of arguments. Expecting 4")
+	}
+
+	id, err := cid.GetID(stub)
+	if err != nil {
+		return "", fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
+	}
+	mspid, err := cid.GetMSPID(stub)
+	if err != nil {
+		return "", fmt.Errorf(fmt.Sprintf("Could not Get MSP ID, err %s", err))
+	}
+
+	fmt.Printf("Id:\n%s\n", id)
+	fmt.Printf("Type:\n%s\n", mspid)
+	fmt.Printf("Credit:\n%s\n", args[0])
+	fmt.Printf("Assets:\n%s\n", args[1])
+	fmt.Printf("PublicKey:\n%s\n", args[2])
+
+	var account = Account{Type: id, Credit: args[0], Assets: args[1], PublicKey: args[2]}
+
+	accountAsBytes, _ := json.Marshal(account)
+	stub.PutState(id, accountAsBytes)
+
+	return id, nil
+}
+/*
+* 0: Id
+*/
+func getAccountPublicKey(stub shim.ChaincodeStubInterface, args []string) (string, error) {
+
+	if len(args) != 1 {
+		return "", fmt.Errorf("Incorrect number of arguments. Expecting 1")
+	}
+
+	accountAsBytes,err:= stub.GetState(args[0])
+	if err!=nil{
+		return "", fmt.Errorf(err.Error())
+	}
+	var account Account;
+	json.Unmarshal(accountAsBytes,&account)
+	return account.PublicKey, nil
+}
+
+func initContract(args []string, timeStamp int64, advertiserId string) Contract {
 	var contract Contract
 
 	contract.AdvertiserId = advertiserId
@@ -94,19 +162,19 @@ func ContractInit(args []string, timeStamp int64, advertiserId string) Contract 
 * 6: AntiCheat_Priority
 * 7: PrivateKey
 */
-func ContractGenerator(stub shim.ChaincodeStubInterface, args []string) error {
+func generatorContract(stub shim.ChaincodeStubInterface, args []string) error {
 	if len(args) != 9 {
-		return "", fmt.Errorf("Incorrect arguments. Expecting 3 value")
+		return fmt.Errorf("Incorrect arguments. Expecting 9 value")
 	}
 
 	id, err := cid.GetID(stub)
 	if err != nil {
-		return shim.Error(fmt.Sprintf("Could not Get ID, err %s", err))
+		return fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
 	}
-	time_stamp := time.Now().Unix()
-	key = fmt.Sprintf("%s_%s_%s_%d", id, args[0], args[1], timeStamp)
+	timeStamp := time.Now().Unix()
+	key := fmt.Sprintf("%s_%s_%s_%d", id, args[0], args[1], timeStamp)
 
-	contract := ContractInit(args[:6], timeStamp, id)
+	contract := initContract(args[:6], timeStamp, id)
 
 	var signatureContract SignatureContract
 	signatureContract.Contract = contract
@@ -116,16 +184,17 @@ func ContractGenerator(stub shim.ChaincodeStubInterface, args []string) error {
 	if err != nil {
 		return err
 	}
-	signatureContract.ContractSignature[id] = signature
+	signatureContract.ContractSignature.Signature[id] = signature
 
 	signatureContractJson, _ := json.Marshal(signatureContract)
-	stub.PutState(key, string(signatureContractJson))
+	stub.PutState(key, []byte(signatureContractJson))
 
-	stub.PutState(args[0] + "_contract", key)
+	stub.PutState(args[0] + "_contract", []byte(key))
 	antiCheatIds :=  strings.Split(args[1], ",")
 	for _, value := range antiCheatIds {
-		stub.PutState(value + "_contract", key)
+	  stub.PutState(value + "_contract", key)
 	}
+	return nil
 }
 
 // get contract msg according to contract id
@@ -137,11 +206,11 @@ func getContract(contractId string) (string, error) {
 	return sc,nil
 }
 
-// contractList get history contracts of media or anticheat
-func contractList(stub shim.ChaincodeStubInterface, args []string) (string, error) {
+// getContractList get history contracts of media or anticheat
+func getContractList(stub shim.ChaincodeStubInterface, args []string) (string, error) {
 	id, err := cid.GetID(stub)
 	if err != nil {
-		return shim.Error(fmt.Sprintf("Could not Get ID, err %s", err))
+		return "", fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
 	}
 	it, err := stub.GetHistoryForKey(id + "_contract")
 	if err != nil {
@@ -150,6 +219,7 @@ func contractList(stub shim.ChaincodeStubInterface, args []string) (string, erro
 
 	resultList :=getHistoryListResult(it)
 	return string(result), nil
+
 }
 
 func getHistoryListResult(resultsIterator shim.HistoryQueryIteratorInterface) []string {
@@ -157,14 +227,16 @@ func getHistoryListResult(resultsIterator shim.HistoryQueryIteratorInterface) []
 	defer resultsIterator.Close()
 
     s:= make([]string, 0, 10)
+
 	bArrayMemberAlreadyWritten := false
+
 	for resultsIterator.HasNext() {
 		queryResponse, err := resultsIterator.Next()
 		if err != nil {
 			continue
 		}
 		item, _ := json.Marshal(queryResponse)
-        s=append(s,item)
+
 	}
     return s
 }
@@ -174,14 +246,14 @@ func getHistoryListResult(resultsIterator shim.HistoryQueryIteratorInterface) []
 // args[2]:private key
 func mediaSubmit(stub shim.ChaincodeStubInterface, args []string) error {
 	if len(args) != 3 {
-		return "", fmt.Errorf("Incorrect arguments. Expecting 3 value")
+		return fmt.Errorf("Incorrect arguments. Expecting 3 value")
 	}
 	contractId := args[0]
 	fileLocation := args[1]
 	privateKey := args[2]
 	id, err := cid.GetID(stub)
 	if err != nil {
-		return shim.Error(fmt.Sprintf("Could not Get ID, err %s", err))
+		return fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
 	}
 	sc, err := stub.GetState(contractId)
 	if err != nil {
@@ -193,9 +265,9 @@ func mediaSubmit(stub shim.ChaincodeStubInterface, args []string) error {
 		return err
 	}
 	//if all people have signed contract
-	antiCheatIds := sc.Contract.AntiCheatIds
-	if len(antiCheatIds)+2 != len(sc.ContractSignature) {
-		return nil
+	antiCheatIds := signatureContract.Contract.AntiCheatIds
+	if len(antiCheatIds)+2 != len(signatureContract.ContractSignature.Signature) {
+		return fmt.Errorf("Could not submit, at Least one AntiCheatOrg not signed.")
 	}
 	//#######
 	log := Log{Address: fileLocation, AntiCheatNum: len(antiCheatIds)}
@@ -204,21 +276,21 @@ func mediaSubmit(stub shim.ChaincodeStubInterface, args []string) error {
 	if err != nil {
 		return err
 	}
-	contractSignature := map[string][]byte{id: signature}
+	contractSignature := ContractSignature{Signature: map[string][]byte{id: signature}}
 	mediaLogSubmit := MediaLogSubmit{Log: log, ContractSignature: contractSignature}
 	mls, _ := json.Marshal(mediaLogSubmit)
-	stub.PutState(contractId+"_log", string(mls))
+	stub.PutState(contractId+"_log", mls)
 	//######
 	for _, id := range antiCheatIds {
-		stub.PutState(id+"_log", contractId+"_log")
+		stub.PutState(id+"_log", []byte(contractId+"_log"))
 	}
 	return nil
 }
 
-func logList(stub shim.ChaincodeStubInterface, args []string) (string, error) {
+func getLogList(stub shim.ChaincodeStubInterface, args []string) (string, error) {
 	id, err := cid.GetID(stub)
 	if err != nil {
-		return shim.Error(fmt.Sprintf("Could not Get ID, err %s", err))
+		return "", fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
 	}
 	it, err := stub.GetHistoryForKey(id + "_log")
 	if err != nil {
@@ -226,7 +298,7 @@ func logList(stub shim.ChaincodeStubInterface, args []string) (string, error) {
 	}
 
 	resultList := getHistoryListResult(it)
-	return string(result), nil
+
 }
 
 // args[0]:log id
@@ -234,14 +306,14 @@ func logList(stub shim.ChaincodeStubInterface, args []string) (string, error) {
 // args[2]:private key
 func anticheatConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 	if len(args) != 3 {
-		return "", fmt.Errorf("Incorrect arguments. Expecting 3 value")
+		return fmt.Errorf("Incorrect arguments. Expecting 3 value")
 	}
 	logId := args[0]
 	fileLocation := args[1]
 	privateKey := args[2]
 	id, err := cid.GetID(stub)
 	if err != nil {
-		return shim.Error(fmt.Sprintf("Could not Get ID, err %s", err))
+		return fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
 	}
 	msl, err := stub.GetState(logId)
 	var mediaLogSubmit MediaLogSubmit
@@ -253,11 +325,11 @@ func anticheatConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 
 	//anticheat Sign
 	logJson, _ := json.Marshal(mediaLogSubmit.Log)
-	sig, err := DSA.Sign(logJson, privateKey)
+	sig, err := DSA.Sign(string(logJson), privateKey)
 	if err != nil {
 		return err
 	}
-	mediaLogSubmit.ContractSignature[id] = sig
+	mediaLogSubmit.ContractSignature.Signature[id] = sig
 
 	//put filelocation
 	mediaLogSubmit.Log.AntiCheatResultAddress = append(mediaLogSubmit.Log.AntiCheatResultAddress, fileLocation)

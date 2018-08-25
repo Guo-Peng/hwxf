@@ -9,6 +9,7 @@ import (
 	"github.com/hyperledger/fabric/core/chaincode/shim"
 	"github.com/hyperledger/fabric/protos/peer"
 	"utils/DSA"
+    "io/ioutil"
 )
 
 // SimpleAsset implements a simple chaincode to manage an asset
@@ -66,8 +67,6 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 
 	if fn == "setAccount" {
 		result, err = setAccount(stub, args)
-	} else if fn == "getAccountPublicKey" {
-		result, err = getAccountPublicKey(stub, args)
 	} else if fn == "generatorContract" {
 		err = generatorContract(stub, args)
 	} else if fn == "mediaSubmit" {
@@ -105,35 +104,34 @@ func setAccount(stub shim.ChaincodeStubInterface, args []string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf(fmt.Sprintf("Could not Get MSP ID, err %s", err))
 	}
-
+    key,err := ioutil.ReadFile(args[2])
+    if err != nil {
+        return "",err
+    }
 	fmt.Printf("Id:\n%s\n", id)
 	fmt.Printf("Type:\n%s\n", mspid)
 	fmt.Printf("Credit:\n%s\n", args[0])
 	fmt.Printf("Assets:\n%s\n", args[1])
-	fmt.Printf("PublicKey:\n%s\n", args[2])
+	fmt.Printf("PublicKey:\n%s\n", string(key))
 
-	var account = Account{Type: id, Credit: args[0], Assets: args[1], PublicKey: args[2]}
+	var account = Account{Type: id, Credit: args[0], Assets: args[1], PublicKey: string(key)}
 
 	accountAsBytes, _ := json.Marshal(account)
 	stub.PutState(id, accountAsBytes)
 
 	return id, nil
 }
-/*
-* 0: Id
-*/
-func getAccountPublicKey(stub shim.ChaincodeStubInterface, args []string) (string, error) {
 
-	if len(args) != 1 {
-		return "", fmt.Errorf("Incorrect number of arguments. Expecting 1")
-	}
-
-	accountAsBytes,err:= stub.GetState(args[0])
+func getAccountPublicKey(stub shim.ChaincodeStubInterface, id string) (string, error) {
+	accountAsBytes,err := stub.GetState(id)
 	if err!=nil{
-		return "", fmt.Errorf(err.Error())
+		return "", err
 	}
 	var account Account;
-	json.Unmarshal(accountAsBytes,&account)
+	err = json.Unmarshal(accountAsBytes,&account)
+    if err!=nil{
+        return "", err
+    }
 	return account.PublicKey, nil
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/hyperledger/fabric/core/chaincode/shim"
 	"github.com/hyperledger/fabric/protos/peer"
 	"utils/DSA"
+    "io/ioutil"
 )
 
 // SimpleAsset implements a simple chaincode to manage an asset
@@ -103,14 +104,17 @@ func setAccount(stub shim.ChaincodeStubInterface, args []string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf(fmt.Sprintf("Could not Get MSP ID, err %s", err))
 	}
-
+    key,err := ioutil.ReadFile(args[2])
+    if err != nil {
+        return "",err
+    }
 	fmt.Printf("Id:\n%s\n", id)
 	fmt.Printf("Type:\n%s\n", mspid)
 	fmt.Printf("Credit:\n%s\n", args[0])
 	fmt.Printf("Assets:\n%s\n", args[1])
-	fmt.Printf("PublicKey:\n%s\n", args[2])
+	fmt.Printf("PublicKey:\n%s\n", string(key))
 
-	var account = Account{Type: id, Credit: args[0], Assets: args[1], PublicKey: args[2]}
+	var account = Account{Type: id, Credit: args[0], Assets: args[1], PublicKey: string(key)}
 
 	accountAsBytes, _ := json.Marshal(account)
 	stub.PutState(id, accountAsBytes)

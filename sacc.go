@@ -67,17 +67,17 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 	return shim.Success([]byte(result))
 }
 
-func ContractInit(args []string, timeStamp int64) Contract {
+func ContractInit(args []string, timeStamp int64, advertiserId string) Contract {
 	var contract Contract
 
-	contract.AdvertiserId = args[0]
-	contract.MediaId = args[1]
-	contract.AntiCheatIds = strings.Split(args[2], ",")
-	contract.PaymentThreshold = args[3]
-	contract.PaymentAmountMedia = args[4]
-	contract.PaymentAmountAntiCheat = args[5]
-	contract.AntiCheatShareType = args[6]
-	contract.AntiCheatPriority = strings.Split(args[7], ",")
+	contract.AdvertiserId = advertiserId
+	contract.MediaId = args[0]
+	contract.AntiCheatIds = strings.Split(args[1], ",")
+	contract.PaymentThreshold = args[2]
+	contract.PaymentAmountMedia = args[3]
+	contract.PaymentAmountAntiCheat = args[4]
+	contract.AntiCheatShareType = args[5]
+	contract.AntiCheatPriority = strings.Split(args[6], ",")
 	contract.TimeStamp = timeStamp
 	return contract
 }
@@ -89,9 +89,8 @@ func ContractInit(args []string, timeStamp int64) Contract {
 * 3: Payment_Amount_Media
 * 4: Payment_Amount_AntiCheat
 * 5: AntiCheat_Share_Type
-* 6: AntiCheat_Share_Type
-* 7: AntiCheat_Priority
-* 8: PrivateKey
+* 6: AntiCheat_Priority
+* 7: PrivateKey
 */
 func ContractGenerator(stub shim.ChaincodeStubInterface, args []string) error {
 	if len(args) != 9 {
@@ -105,13 +104,13 @@ func ContractGenerator(stub shim.ChaincodeStubInterface, args []string) error {
 	time_stamp := time.Now().Unix()
 	key = fmt.Sprintf("%s_%s_%s_%d", id, args[0], args[1], timeStamp)
 
-	contract := ContractInit(args[:7], timeStamp)
+	contract := ContractInit(args[:6], timeStamp, id)
 
 	var signatureContract SignatureContract
 	signatureContract.Contract = contract
 
 	contractJson, _ := json.Marshal(contract)
-	signature, err := DSA.Sign(string(contractJson), args[8])
+	signature, err := DSA.Sign(string(contractJson), args[7])
 	if err != nil {
 		return err
 	}

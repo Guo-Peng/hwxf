@@ -123,22 +123,18 @@ func ContractGenerator(stub shim.ChaincodeStubInterface, args []string) error {
 
 	stub.PutState(args[0] + "_contract", key)
 	antiCheatIds :=  strings.Split(args[1], ",")
-	for index, value := range antiCheatIds {
+	for _, value := range antiCheatIds {
 		stub.PutState(value + "_contract", key)
 	}
 }
 
 // get contract msg according to contract id
-func getContract(stub shim.ChaincodeStubInterface, args []string) (string, error) {
+func getContract(contractId string) (string, error) {
 	sc, err := stub.GetState(contractId)
 	if err != nil {
 		return "", err
 	}
-	var signatureContract SignatureContract
-	err = json.Unmarshal(sc, &signatureContract)
-	if err != nil {
-		return "", err
-	}
+	return sc,nil
 }
 
 // contractList get history contracts of media or anticheat
@@ -152,37 +148,25 @@ func contractList(stub shim.ChaincodeStubInterface, args []string) (string, erro
 		return "", err
 	}
 
-	result, err := getHistoryListResult(it)
-	if err != nil {
-		return "", err
-	}
+	resultList :=getHistoryListResult(it)
 	return string(result), nil
 }
 
-func getHistoryListResult(resultsIterator shim.HistoryQueryIteratorInterface) ([]byte, error) {
+func getHistoryListResult(resultsIterator shim.HistoryQueryIteratorInterface) []string {
 
 	defer resultsIterator.Close()
-	// buffer is a JSON array containing QueryRecords
-	var buffer bytes.Buffer
-	buffer.WriteString("[")
 
+    s:= make([]string, 0, 10)
 	bArrayMemberAlreadyWritten := false
 	for resultsIterator.HasNext() {
 		queryResponse, err := resultsIterator.Next()
 		if err != nil {
-			return nil, err
-		}
-		// Add a comma before array members, suppress it for the first array member
-		if bArrayMemberAlreadyWritten == true {
-			buffer.WriteString(",")
+			continue
 		}
 		item, _ := json.Marshal(queryResponse)
-		buffer.Write(item)
-		bArrayMemberAlreadyWritten = true
+        s=append(s,item)
 	}
-	buffer.WriteString("]")
-	fmt.Printf("queryResult:\n%s\n", buffer.String())
-	return buffer.Bytes(), nil
+    return s
 }
 
 // args[0]:contract id
@@ -241,10 +225,7 @@ func logList(stub shim.ChaincodeStubInterface, args []string) (string, error) {
 		return "", err
 	}
 
-	result, err := getHistoryListResult(it)
-	if err != nil {
-		return "", err
-	}
+	resultList := getHistoryListResult(it)
 	return string(result), nil
 }
 

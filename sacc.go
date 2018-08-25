@@ -120,10 +120,10 @@ func ContractGenerator(stub shim.ChaincodeStubInterface, args []string) error {
 	signatureContractJson, _ := json.Marshal(signatureContract)
 	stub.PutState(key, string(signatureContractJson))
 
-	stub.PutState(args[0], key)
+	stub.PutState(args[0] + "_contract", key)
 	antiCheatIds :=  strings.Split(args[1], ",")
 	for index, value := range antiCheatIds {
-		stub.PutState(value, key)
+		stub.PutState(value + "_contract", key)
 	}
 }
 

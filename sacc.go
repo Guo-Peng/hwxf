@@ -2,9 +2,10 @@ package main
 
 import (
 	"fmt"
+	"github.com/hyperledger/fabric/core/chaincode/lib/cid"
 	"github.com/hyperledger/fabric/core/chaincode/shim"
 	"github.com/hyperledger/fabric/protos/peer"
-	DSA "ipfs"
+	"utils/DSA"
 )
 
 // SimpleAsset implements a simple chaincode to manage an asset
@@ -23,7 +24,7 @@ type Contract struct {
 }
 
 type ContractSignature struct {
-	Signature map[string]string
+	Signature map[string][]byte
 }
 
 type SignatureContract struct {
@@ -32,9 +33,10 @@ type SignatureContract struct {
 }
 
 type Log struct {
-	Address   string
-	TimeStamp int64
-    AntiCheatResultAddress []string
+	Address                string
+	TimeStamp              int64
+	AntiCheatResultAddress []string
+	AntiCheatNum           int64
 }
 
 type MediaLogSubmit struct {
@@ -51,8 +53,10 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 	var result string
 	var err error
 
-	if fn == "submit" {
+	if fn == "mediaSubmit" {
 		err = submit(stub, args)
+	} else if fn == "contractList" {
+		result, err = contractList(stub, args)
 	}
 
 	if err != nil {
@@ -61,49 +65,164 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 	return shim.Success([]byte(result))
 }
 
-// args[0]:id
+// get contract msg according to contract id
+func getContract(stub shim.ChaincodeStubInterface, args []string) (string, error) {
+	sc, err := stub.GetState(contractId)
+	if err != nil {
+		return "", err
+	}
+	var signatureContract SignatureContract
+	err = json.Unmarshal(sc, &signatureContract)
+	if err != nil {
+		return "", err
+	}
+}
+
+// contractList get history contracts of media or anticheat
+func contractList(stub shim.ChaincodeStubInterface, args []string) (string, error) {
+	id, err := cid.GetID(stub)
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Could not Get ID, err %s", err))
+	}
+	it, err := stub.GetHistoryForKey(id + "_contract")
+	if err != nil {
+		return "", err
+	}
+
+	result, err := getHistoryListResult(it)
+	if err != nil {
+		return "", err
+	}
+	return string(result), nil
+}
+
+func getHistoryListResult(resultsIterator shim.HistoryQueryIteratorInterface) ([]byte, error) {
+
+	defer resultsIterator.Close()
+	// buffer is a JSON array containing QueryRecords
+	var buffer bytes.Buffer
+	buffer.WriteString("[")
+
+	bArrayMemberAlreadyWritten := false
+	for resultsIterator.HasNext() {
+		queryResponse, err := resultsIterator.Next()
+		if err != nil {
+			return nil, err
+		}
+		// Add a comma before array members, suppress it for the first array member
+		if bArrayMemberAlreadyWritten == true {
+			buffer.WriteString(",")
+		}
+		item, _ := json.Marshal(queryResponse)
+		buffer.Write(item)
+		bArrayMemberAlreadyWritten = true
+	}
+	buffer.WriteString("]")
+	fmt.Printf("queryResult:\n%s\n", buffer.String())
+	return buffer.Bytes(), nil
+}
+
+// args[0]:contract id
 // args[1]:file location
 // args[2]:private key
-func submit(stub shim.ChaincodeStubInterface, args []string) error {
+func mediaSubmit(stub shim.ChaincodeStubInterface, args []string) error {
 	if len(args) != 3 {
 		return "", fmt.Errorf("Incorrect arguments. Expecting 3 value")
 	}
-	sc, e1 := stub.GetState(args[0] + "_contract")
-	if e1 != nil {
-		return e1
+	contractId := args[0]
+	fileLocation := args[1]
+	privateKey := args[2]
+	id, err := cid.GetID(stub)
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Could not Get ID, err %s", err))
 	}
-	if sc == "" {
-		return nil
+	sc, err := stub.GetState(contractId)
+	if err != nil {
+		return err
 	}
 	var signatureContract SignatureContract
-	e2 := json.Unmarshal(sc, &signatureContract)
-	if e2 != nil {
-		return e2
+	err = json.Unmarshal(sc, &signatureContract)
+	if err != nil {
+		return err
 	}
-    //if all people have signed contract
+	//if all people have signed contract
 	antiCheatIds := sc.Contract.AntiCheatIds
-    if len(antiCheatIds)+2 != len(sc.ContractSignature) {
-        return nil
-    }
-	//#######
-	log := Log{Address: args[1]}
-	signature, e3 := DSA.Sign(log, args[2])
-	if e3 != nil {
-		return e3
+	if len(antiCheatIds)+2 != len(sc.ContractSignature) {
+		return nil
 	}
-	contractSignature := map[string]string{args[0]: signature}
+	//#######
+	log := Log{Address: fileLocation, AntiCheatNum: len(antiCheatIds)}
+	logJson, _ := json.Marshal(log)
+	signature, err := DSA.Sign(string(logJson), privateKey)
+	if err != nil {
+		return err
+	}
+	contractSignature := map[string][]byte{id: signature}
 	mediaLogSubmit := MediaLogSubmit{Log: log, ContractSignature: contractSignature}
 	mls, _ := json.Marshal(mediaLogSubmit)
+	stub.PutState(contractId+"_log", string(mls))
 	//######
 	for _, id := range antiCheatIds {
-		stub.PutState(id+"_log", mls)
+		stub.PutState(id+"_log", contractId+"_log")
 	}
-	stub.PutState(args[0]+"_contract", "")
 	return nil
 }
 
-func confirm(stub shim.ChaincodeStubInterface, args []string) error {
-    stub.GetState
+func logList(stub shim.ChaincodeStubInterface, args []string) (string, error) {
+	id, err := cid.GetID(stub)
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Could not Get ID, err %s", err))
+	}
+	it, err := stub.GetHistoryForKey(id + "_log")
+	if err != nil {
+		return "", err
+	}
+
+	result, err := getHistoryListResult(it)
+	if err != nil {
+		return "", err
+	}
+	return string(result), nil
+}
+
+// args[0]:log id
+// args[1]:filepath
+// args[2]:private key
+func anticheatConfirm(stub shim.ChaincodeStubInterface, args []string) error {
+	if len(args) != 3 {
+		return "", fmt.Errorf("Incorrect arguments. Expecting 3 value")
+	}
+	logId := args[0]
+	fileLocation := args[1]
+	privateKey := args[2]
+	id, err := cid.GetID(stub)
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Could not Get ID, err %s", err))
+	}
+	msl, err := stub.GetState(logId)
+	var mediaLogSubmit MediaLogSubmit
+	err = json.Unmarshal(msl, &mediaLogSubmit)
+	if err != nil {
+		return err
+	}
+	//TODO DSA.Verify(privateKey)
+
+	//anticheat Sign
+	logJson, _ := json.Marshal(mediaLogSubmit.Log)
+	sig, err := DSA.Sign(logJson, privateKey)
+	if err != nil {
+		return err
+	}
+	mediaLogSubmit.ContractSignature[id] = sig
+
+	//put filelocation
+	mediaLogSubmit.Log.AntiCheatResultAddress = append(mediaLogSubmit.Log.AntiCheatResultAddress, fileLocation)
+
+	//if all have signed
+	if mediaLogSubmit.Log.AntiCheatNum == len(mediaLogSubmit.Log.AntiCheatResultAddress) {
+		fmt.Println("jiesuan")
+        //TODO jiesuan
+	}
 	return nil
 }
 

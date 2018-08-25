@@ -59,6 +59,8 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 		err = submit(stub, args)
 	} else if fn == "contractList" {
 		result, err = contractList(stub, args)
+	} else if fn == "contractGenerator" {
+		err = ContractGenerator(stub, args)
 	}
 
 	if err != nil {

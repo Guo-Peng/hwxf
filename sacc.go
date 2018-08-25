@@ -10,6 +10,7 @@ import (
 	"github.com/hyperledger/fabric/protos/peer"
 	"utils/DSA"
     "io/ioutil"
+    "errors"
 )
 
 // SimpleAsset implements a simple chaincode to manage an asset
@@ -358,10 +359,24 @@ func anticheatConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 	if err != nil {
 		return err
 	}
+    logJson,err := json.Marshal(mediaLogSubmit.Log)
 	//TODO DSA.Verify(privateKey)
-
+    for id,sig := range mediaLogSubmit.ContractSignature.Signature{
+        acc,_:=stub.GetState(id)
+        var account Account
+        err = json.Unmarshal(acc, &account)
+        if err != nil {
+            return err
+        }
+        valid,err := DSA.Verify(string(logJson),sig,account.PublicKey)
+        if err != nil {
+            return err
+        }
+        if (valid == false){
+            return errors.New("not valid")
+        }
+    }
 	//anticheat Sign
-	logJson, _ := json.Marshal(mediaLogSubmit.Log)
 	sig, err := DSA.Sign(string(logJson), privateKey)
 	if err != nil {
 		return err

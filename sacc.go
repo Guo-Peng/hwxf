@@ -110,7 +110,7 @@ func ContractGenerator(stub shim.ChaincodeStubInterface, args []string) error {
 	signatureContract.Contract = contract
 
 	contractJson, _ := json.Marshal(contract)
-	signature, err := DSA.Sign(string(contractJson), args[8])
+	signature, err := DSA.Sign(string(contractJson), args[7])
 	if err != nil {
 		return err
 	}

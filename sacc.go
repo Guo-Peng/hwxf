@@ -188,11 +188,108 @@ func generatorContract(stub shim.ChaincodeStubInterface, args []string) error {
 	signatureContractJson, _ := json.Marshal(signatureContract)
 	stub.PutState(key, []byte(signatureContractJson))
 
-	stub.PutState(args[0] + "_contract", []byte(key))
+	stub.PutState(id + "_confirm", []byte(key))
+	stub.PutState(args[0] + "_confirm", []byte(key))
 	antiCheatIds :=  strings.Split(args[1], ",")
 	for _, value := range antiCheatIds {
-		stub.PutState(value + "_contract", []byte(key))
+		stub.PutState(value + "_confirm", []byte(key))
 	}
+	return nil
+}
+
+func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface) error {
+	id, err := cid.GetID(stub)
+	if err != nil {
+		return fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
+	}
+
+	contractKey, err := stub.GetState(id + "_confirm")
+	if err != nil {
+		return err
+	}
+
+	sc, err := stub.GetState(string(contractKey))
+	var signatureContract SignatureContract
+	err = json.Unmarshal(sc, &signatureContract)
+	if err != nil {
+		return err
+	}
+
+	for k, v := range signatureContract.ContractSignature.Signature {
+		var publicKey = getAccountPublicKey(stub, k)
+
+		valid, err := DSA.Verify(signatureContract.Contract, v, publicKey)
+		if !valid {
+			return fmt.Errorf(fmt.Sprintf("verify id %s failed", k))
+		}
+	}
+
+	ac, err := stub.GetState(id)
+	var account Account
+	err = json.Unmarshal(ac, &account)
+	if err != nil {
+		return err
+	}
+
+	if (account.Type == "Advertiser") {
+		stub.PutState(signatureContract.Contract.MediaId + "_contract", []byte(signatureContractJson))
+		for _, value := range signatureContract.Contract.AntiCheat_Ids {
+			stub.PutState(value + "_contract", []byte(signatureContractJson))
+		}
+	} else {
+		contractJson, _ := json.Marshal(signatureContract.Contract)
+		signature, err := DSA.Sign(string(contractJson), args[0])
+		if err != nil {
+			return err
+		}
+
+		signatureContract.ContractSignature.Signature[id] = signature
+		signatureContractJson, _ := json.Marshal(signatureContract)
+		stub.PutState(string(keyByte), []byte(signatureContractJson))
+	}
+
+	return nil
+}
+
+func mediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("Incorrect arguments. Expecting 1 value")
+	}
+
+	id, err := cid.GetID(stub)
+	if err != nil {
+		return fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
+	}
+
+	contractKey, err := stub.GetState(id + "_contract")
+	if err != nil {
+		return err
+	}
+
+	sc, err := stub.GetState(string(contractKey))
+	var signatureContract SignatureContract
+	err = json.Unmarshal(sc, &signatureContract)
+	if err != nil {
+		return err
+	}
+
+	for k, v := range signatureContract.ContractSignature.Signature {
+		var publicKey = getAccountPublicKey(stub, k)
+
+		valid, err := DSA.Verify(signatureContract.Contract, v, publicKey)
+		if !valid {
+			return fmt.Errorf(fmt.Sprintf("verify id %s failed", k))
+		}
+	}
+	contractJson, _ := json.Marshal(signatureContract.Contract)
+	signature, err := DSA.Sign(string(contractJson), args[0])
+	if err != nil {
+		return err
+	}
+	signatureContract.ContractSignature.Signature[id] = signature
+	
+	signatureContractJson, _ := json.Marshal(signatureContract)
+	stub.PutState(string(keyByte), []byte(signatureContractJson))
 	return nil
 }
 

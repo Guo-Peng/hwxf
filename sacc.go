@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 	"github.com/hyperledger/fabric/core/chaincode/lib/cid"
 	"github.com/hyperledger/fabric/core/chaincode/shim"
 	"github.com/hyperledger/fabric/protos/peer"
@@ -21,6 +22,7 @@ type Contract struct {
 	PaymentAmountAntiCheat string
 	AntiCheatShareType     string
 	AntiCheatPriority      []string
+	TimeStamp			   int64
 }
 
 type ContractSignature struct {
@@ -63,6 +65,66 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 		return shim.Error(err.Error())
 	}
 	return shim.Success([]byte(result))
+}
+
+func ContractInit(args []string, timeStamp int64) Contract {
+	var contract Contract
+
+	contract.AdvertiserId = args[0]
+	contract.MediaId = args[1]
+	contract.AntiCheatIds = strings.Split(args[2], ",")
+	contract.PaymentThreshold = args[3]
+	contract.PaymentAmountMedia = args[4]
+	contract.PaymentAmountAntiCheat = args[5]
+	contract.AntiCheatShareType = args[6]
+	contract.AntiCheatPriority = strings.Split(args[7], ",")
+	contract.TimeStamp = timeStamp
+	return contract
+}
+
+/*
+* 0: Media_Id
+* 1: AntiCheat_Ids
+* 2: Payment_Threshold
+* 3: Payment_Amount_Media
+* 4: Payment_Amount_AntiCheat
+* 5: AntiCheat_Share_Type
+* 6: AntiCheat_Share_Type
+* 7: AntiCheat_Priority
+* 8: PrivateKey
+*/
+func ContractGenerator(stub shim.ChaincodeStubInterface, args []string) error {
+	if len(args) != 9 {
+		return "", fmt.Errorf("Incorrect arguments. Expecting 3 value")
+	}
+
+	id, err := cid.GetID(stub)
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Could not Get ID, err %s", err))
+	}
+	time_stamp := time.Now().Unix()
+	key = fmt.Sprintf("%s_%s_%s_%d", id, args[0], args[1], timeStamp)
+
+	contract := ContractInit(args[:7], timeStamp)
+
+	var signatureContract SignatureContract
+	signatureContract.Contract = contract
+
+	contractJson, _ := json.Marshal(contract)
+	signature, err := DSA.Sign(string(contractJson), args[8])
+	if err != nil {
+		return err
+	}
+	signatureContract.ContractSignature[id] = signature
+
+	signatureContractJson, _ := json.Marshal(signatureContract)
+	stub.PutState(key, string(signatureContractJson))
+
+	stub.PutState(args[0], key)
+	antiCheatIds :=  strings.Split(args[1], ",")
+	for index, value := range antiCheatIds {
+		stub.PutState(value, key)
+	}
 }
 
 // get contract msg according to contract id

@@ -66,8 +66,6 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 
 	if fn == "setAccount" {
 		result, err = setAccount(stub, args)
-	} else if fn == "getAccountPublicKey" {
-		result, err = getAccountPublicKey(stub, args)
 	} else if fn == "generatorContract" {
 		err = generatorContract(stub, args)
 	} else if fn == "mediaSubmit" {
@@ -119,21 +117,17 @@ func setAccount(stub shim.ChaincodeStubInterface, args []string) (string, error)
 
 	return id, nil
 }
-/*
-* 0: Id
-*/
-func getAccountPublicKey(stub shim.ChaincodeStubInterface, args []string) (string, error) {
 
-	if len(args) != 1 {
-		return "", fmt.Errorf("Incorrect number of arguments. Expecting 1")
-	}
-
-	accountAsBytes,err:= stub.GetState(args[0])
+func getAccountPublicKey(stub shim.ChaincodeStubInterface, id string) (string, error) {
+	accountAsBytes,err := stub.GetState(id)
 	if err!=nil{
-		return "", fmt.Errorf(err.Error())
+		return "", err
 	}
 	var account Account;
-	json.Unmarshal(accountAsBytes,&account)
+	err = json.Unmarshal(accountAsBytes,&account)
+    if err!=nil{
+        return "", err
+    }
 	return account.PublicKey, nil
 }
 

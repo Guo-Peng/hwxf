@@ -203,6 +203,13 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface) error {
 		return fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
 	}
 
+	ac, err := stub.GetState(id)
+	var account Account
+	err = json.Unmarshal(ac, &account)
+	if err != nil {
+		return err
+	}
+
 	contractKey, err := stub.GetState(id + "_confirm")
 	if err != nil {
 		return err
@@ -215,6 +222,12 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface) error {
 		return err
 	}
 
+	if (account.Type == "Advertiser") {
+		if len(signatureContract.ContractSignature.Signature) != len(signatureContract.Contract.AntiCheatIds) + 2 {
+			return nil
+		}
+	}
+
 	for k, v := range signatureContract.ContractSignature.Signature {
 		var publicKey = getAccountPublicKey(stub, k)
 
@@ -222,13 +235,6 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface) error {
 		if !valid {
 			return fmt.Errorf(fmt.Sprintf("verify id %s failed", k))
 		}
-	}
-
-	ac, err := stub.GetState(id)
-	var account Account
-	err = json.Unmarshal(ac, &account)
-	if err != nil {
-		return err
 	}
 
 	if (account.Type == "Advertiser") {

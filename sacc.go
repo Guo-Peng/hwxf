@@ -1,16 +1,23 @@
 package main
 
 import (
-	"fmt"
-	"time"
-	"strings"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"github.com/hyperledger/fabric/core/chaincode/lib/cid"
 	"github.com/hyperledger/fabric/core/chaincode/shim"
 	"github.com/hyperledger/fabric/protos/peer"
+	"io/ioutil"
+	"os/exec"
+	"strconv"
+	"strings"
+	"time"
 	"utils/DSA"
-    "io/ioutil"
-    "errors"
+)
+
+const (
+	RIGHT_CREDIT = 1 //each right judgement add 1 credit
+	WRONG_CREDIT = 9 //each wrong judgement decrease 9 credit
 )
 
 // SimpleAsset implements a simple chaincode to manage an asset
@@ -18,9 +25,9 @@ type SimpleAsset struct {
 }
 
 type Account struct {
-	Type string `json:"type"`
-	Credit string `json:"credit"`
-	Assets string `json:"assets"`
+	Type      string `json:"type"`
+	Credit    string `json:"credit"`
+	Assets    string `json:"assets"`
 	PublicKey string `json:"public_key"`
 }
 
@@ -33,7 +40,7 @@ type Contract struct {
 	PaymentAmountAntiCheat string
 	AntiCheatShareType     string
 	AntiCheatPriority      []string
-	TimeStamp			   int64
+	TimeStamp              int64
 }
 
 type ContractSignature struct {
@@ -80,19 +87,22 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 		result, err = getLogList(stub, args)
 	} else if fn == "advertiserMediaAntiConfirm" {
 		err = advertiserMediaAntiConfirm(stub, args)
+	} else if fn == "settleAccount" {
+		err = settleAccount(stub, args)
 	}
-	
+
 	if err != nil {
 		return shim.Error(err.Error())
 	}
 	return shim.Success([]byte(result))
 }
+
 /* ---------------------链码区域---------------------------*/
 /*
 * 0: Credit
 * 1: Assets
 * 2: PublicKey
-*/
+ */
 func setAccount(stub shim.ChaincodeStubInterface, args []string) (string, error) {
 
 	if len(args) != 3 {
@@ -107,10 +117,10 @@ func setAccount(stub shim.ChaincodeStubInterface, args []string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf(fmt.Sprintf("Could not Get MSP ID, err %s", err))
 	}
-    key,err := ioutil.ReadFile(args[2])
-    if err != nil {
-        return "",err
-    }
+	key, err := ioutil.ReadFile(args[2])
+	if err != nil {
+		return "", err
+	}
 	fmt.Printf("Id:\n%s\n", id)
 	fmt.Printf("Type:\n%s\n", mspid)
 	fmt.Printf("Credit:\n%s\n", args[0])
@@ -126,15 +136,15 @@ func setAccount(stub shim.ChaincodeStubInterface, args []string) (string, error)
 }
 
 func getAccountPublicKey(stub shim.ChaincodeStubInterface, id string) (string, error) {
-	accountAsBytes,err := stub.GetState(id)
-	if err!=nil{
+	accountAsBytes, err := stub.GetState(id)
+	if err != nil {
 		return "", err
 	}
-	var account Account;
-	err = json.Unmarshal(accountAsBytes,&account)
-    if err!=nil{
-        return "", err
-    }
+	var account Account
+	err = json.Unmarshal(accountAsBytes, &account)
+	if err != nil {
+		return "", err
+	}
 	return account.PublicKey, nil
 }
 
@@ -162,7 +172,7 @@ func initContract(args []string, timeStamp int64, advertiserId string) Contract 
 * 5: AntiCheat_Share_Type
 * 6: AntiCheat_Priority
 * 7: PrivateKey
-*/
+ */
 func generatorContract(stub shim.ChaincodeStubInterface, args []string) error {
 	if len(args) != 9 {
 		return fmt.Errorf("Incorrect arguments. Expecting 9 value")
@@ -190,11 +200,11 @@ func generatorContract(stub shim.ChaincodeStubInterface, args []string) error {
 	signatureContractJson, _ := json.Marshal(signatureContract)
 	stub.PutState(key, []byte(signatureContractJson))
 
-	stub.PutState(id + "_confirm", []byte(key))
-	stub.PutState(args[0] + "_confirm", []byte(key))
-	antiCheatIds :=  strings.Split(args[1], ",")
+	stub.PutState(id+"_confirm", []byte(key))
+	stub.PutState(args[0]+"_confirm", []byte(key))
+	antiCheatIds := strings.Split(args[1], ",")
 	for _, value := range antiCheatIds {
-		stub.PutState(value + "_confirm", []byte(key))
+		stub.PutState(value+"_confirm", []byte(key))
 	}
 	return nil
 }
@@ -228,8 +238,8 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string)
 		return err
 	}
 
-	if (account.Type == "Advertiser") {
-		if len(signatureContract.ContractSignature.Signature) != len(signatureContract.Contract.AntiCheatIds) + 2 {
+	if account.Type == "Advertiser" {
+		if len(signatureContract.ContractSignature.Signature) != len(signatureContract.Contract.AntiCheatIds)+2 {
 			return nil
 		}
 	}
@@ -247,10 +257,10 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string)
 		}
 	}
 
-	if (account.Type == "Advertiser") {
-		stub.PutState(signatureContract.Contract.MediaId + "_contract", sc)
+	if account.Type == "Advertiser" {
+		stub.PutState(signatureContract.Contract.MediaId+"_contract", sc)
 		for _, value := range signatureContract.Contract.AntiCheatIds {
-			stub.PutState(value + "_contract", sc)
+			stub.PutState(value+"_contract", sc)
 		}
 	} else {
 		contractJson, _ := json.Marshal(signatureContract.Contract)
@@ -307,7 +317,7 @@ func mediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 		return err
 	}
 	signatureContract.ContractSignature.Signature[id] = signature
-	
+
 	signatureContractJson, _ := json.Marshal(signatureContract)
 	stub.PutState(string(contractKey), []byte(signatureContractJson))
 	return nil
@@ -319,7 +329,7 @@ func getContract(stub shim.ChaincodeStubInterface, contractId string) (string, e
 	if err != nil {
 		return "", err
 	}
-	return string(sc),nil
+	return string(sc), nil
 }
 
 // getContractList get history contracts of media or anticheat
@@ -333,7 +343,7 @@ func getContractList(stub shim.ChaincodeStubInterface, args []string) (string, e
 		return "", err
 	}
 
-	resultList :=getHistoryListResult(it)
+	resultList := getHistoryListResult(it)
 	return strings.Join(resultList, "\n"), nil
 }
 
@@ -341,7 +351,7 @@ func getHistoryListResult(resultsIterator shim.HistoryQueryIteratorInterface) []
 
 	defer resultsIterator.Close()
 
-    s:= make([]string, 0, 10)
+	s := make([]string, 0, 10)
 	// bArrayMemberAlreadyWritten := false
 	for resultsIterator.HasNext() {
 		queryResponse, err := resultsIterator.Next()
@@ -349,9 +359,9 @@ func getHistoryListResult(resultsIterator shim.HistoryQueryIteratorInterface) []
 			continue
 		}
 		item, _ := json.Marshal(queryResponse)
-        s=append(s,string(item))
+		s = append(s, string(item))
 	}
-    return s
+	return s
 }
 
 // args[0]:contract id
@@ -434,23 +444,23 @@ func anticheatConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 	if err != nil {
 		return err
 	}
-    logJson,err := json.Marshal(mediaLogSubmit.Log)
+	logJson, err := json.Marshal(mediaLogSubmit.Log)
 	//TODO DSA.Verify(privateKey)
-    for id,sig := range mediaLogSubmit.ContractSignature.Signature{
-        acc,_:=stub.GetState(id)
-        var account Account
-        err = json.Unmarshal(acc, &account)
-        if err != nil {
-            return err
-        }
-        valid,err := DSA.Verify(string(logJson),sig,account.PublicKey)
-        if err != nil {
-            return err
-        }
-        if (valid == false){
-            return errors.New("not valid")
-        }
-    }
+	for id, sig := range mediaLogSubmit.ContractSignature.Signature {
+		acc, _ := stub.GetState(id)
+		var account Account
+		err = json.Unmarshal(acc, &account)
+		if err != nil {
+			return err
+		}
+		valid, err := DSA.Verify(string(logJson), sig, account.PublicKey)
+		if err != nil {
+			return err
+		}
+		if valid == false {
+			return errors.New("not valid")
+		}
+	}
 	//anticheat Sign
 	sig, err := DSA.Sign(string(logJson), privateKey)
 	if err != nil {
@@ -464,9 +474,137 @@ func anticheatConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 	//if all have signed
 	if mediaLogSubmit.Log.AntiCheatNum == len(mediaLogSubmit.Log.AntiCheatResultAddress) {
 		fmt.Println("jiesuan")
-        //TODO jiesuan
+		//TODO jiesuan
 	}
 	return nil
+}
+
+//args[0]: contractId
+//args[1]: account-fileAddress map
+func settleAccount(stub shim.ChaincodeStubInterface, args []string) error { //To Do: verify with public key
+	scAsByte, err := stub.GetState(args[0])
+	var sc Contract
+	err = json.Unmarshal(scAsByte, &sc)
+	if err != nil {
+		return err
+	}
+	antiCheatIds := sc.AntiCheatIds
+	antiCheatPriorityString := sc.AntiCheatPriority
+	//transfer string into float64
+	var antiCheatPriorityFloat = make([]float64, len(antiCheatPriorityString))
+	for i := 0; i < len(antiCheatPriorityString); i++ {
+		priority, err := strconv.ParseFloat(antiCheatPriorityString[i], 64)
+		if err != nil {
+			return err
+		}
+		antiCheatPriorityFloat[i] = priority
+	}
+	antiCheatAddressMap, err := getAddressMap(args[1]) //get address map from string
+	if err != nil {
+		return err
+	}
+	var antiCheatResults = make([][]float64, len(antiCheatIds))
+	for i := 0; i < len(antiCheatIds); i++ {
+		antiCheatResult, err := getAntiCheatResult(antiCheatAddressMap[antiCheatIds[i]])
+		if err != nil {
+			return err
+		}
+		antiCheatResults[i] = antiCheatResult
+	}
+	//count right and wrong judgement for each antiCheat
+	var countArray = make([][2]int, len(antiCheatResults))
+	for j := 0; j < len(antiCheatResults[0]); j++ {
+		var sum float64
+		for i := 0; i < len(antiCheatResults); i++ {
+			sum += antiCheatResults[i][j] * antiCheatPriorityFloat[i]
+		}
+		for i := 0; i < len(antiCheatResults); i++ {
+			if (sum >= 0 && antiCheatResults[i][j] == 1) || (sum < 0 && antiCheatResults[i][j] == -1) {
+				countArray[i][0]++ //countArray[i][0] counts the right num
+			} else {
+				countArray[i][1]++ //countArray[i][1] counts the wrong num
+			}
+		}
+	}
+	return calculateMoneyAndCredit(stub, countArray, antiCheatIds)
+}
+
+func getAddressMap(addressStr string) (map[string]string, error) {
+	strs := strings.Split(addressStr, ",")
+	var addressMap = make(map[string]string, 0)
+	for _, str := range strs {
+		address := strings.Split(str, "\t")
+		if len(address) < 2 {
+			return nil, fmt.Errorf("address format error")
+		}
+		addressMap[address[0]] = address[1]
+	}
+	return addressMap, nil
+}
+
+//get file using ipfs
+func getAntiCheatResult(address string) ([]float64, error) {
+	if address == "" {
+		return nil, fmt.Errorf("Incorrect arguments. Expecting Address as string")
+	}
+	cmd := "curl " + address
+	output, err := exec.Command("sh", "-c", cmd).Output()
+	if err != nil {
+		return nil, err
+	}
+	strs := strings.Split(string(output), "\n")
+	var result = make([]float64, len(strs))
+	for i := 0; i < len(strs); i++ {
+		num, err := strconv.ParseFloat(strings.Split(strs[i], "\t")[1], 64)
+		if err != nil {
+			return nil, err
+		}
+		result[i] = num
+	}
+	return result, nil
+}
+
+func calculateMoneyAndCredit(stub shim.ChaincodeStubInterface, countArray [][2]int, antiCheatIds []string) error {
+	var sum float64
+	for _, num := range countArray {
+		sum += float64(num[0])
+	}
+	creditArray := calculateCredit(countArray)
+	for i := 0; i < len(antiCheatIds); i++ {
+		accountAsBytes, err := stub.GetState(antiCheatIds[i])
+		if err != nil {
+			return err
+		}
+		var account Account
+		err = json.Unmarshal(accountAsBytes, &account)
+		if err != nil {
+			return err
+		}
+		assets, err := strconv.ParseFloat(account.Assets, 64)
+		assets += float64(countArray[i][0]) / sum
+		account.Assets = strconv.FormatFloat(assets, 'E', -1, 64)
+		credit, err := strconv.ParseFloat(account.Credit, 64)
+		credit += creditArray[i]
+		account.Credit = strconv.FormatFloat(credit, 'E', -1, 64)
+		accountAsBytes, _ = json.Marshal(account)
+		stub.PutState(antiCheatIds[i], accountAsBytes)
+	}
+	return nil
+}
+
+func calculateCredit(countArray [][2]int) []float64 {
+	var length = len(countArray)
+	var pointArray = make([]float64, length)
+	var sum float64
+	for i := 0; i < length; i++ {
+		pointArray[i] = float64(countArray[i][0]*RIGHT_CREDIT - countArray[i][1]*WRONG_CREDIT)
+		sum += pointArray[i]
+	}
+	avg := sum / float64(length)
+	for i := 0; i < length; i++ {
+		pointArray[i] -= avg
+	}
+	return pointArray
 }
 
 // main function starts up the chaincode in the container during instantiate

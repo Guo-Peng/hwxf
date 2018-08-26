@@ -10,6 +10,10 @@ import (
 	"github.com/hyperledger/fabric/protos/peer"
 	"utils/DSA"
     "io/ioutil"
+    "bytes"
+    "net/http"
+    "github.com/progrium/go-shell"
+    "strconv"
 )
 
 // SimpleAsset implements a simple chaincode to manage an asset
@@ -55,6 +59,9 @@ type MediaLogSubmit struct {
 	Log               Log
 	ContractSignature ContractSignature
 }
+
+const RIGHT_CREDIT := 1
+const WRONG_CREDIT := 9
 
 func (t *SimpleAsset) Init(stub shim.ChaincodeStubInterface) peer.Response {
 	return shim.Success(nil)
@@ -335,6 +342,96 @@ func anticheatConfirm(stub shim.ChaincodeStubInterface, args []string) error {
         //TODO jiesuan
 	}
 	return nil
+}
+
+func settleAccount(stub shim.ChaincodeStubInterface, args []string) (string, error) {//To Do: verify with public key  
+	scByte, err := stub.GetState(contractId)
+	sc := string(scByte[:])
+	antiCheatIds := sc.AntiCheatIds
+	antiCheatPriority := sc.AntiCheatPriority
+	var antiCheatResults  = make([][]int, len(antiCheatIds))
+	var addresses = args[0]
+	for i:=0;i<len(antiCheatIds);i++{
+		antiCheatResult,err := getAntiCheatResult(antiCheatAddressMap[antiCheatIds[i]])
+		if err!=nil{
+			return "", err
+		}
+		antiCheatResults[i] = antiCheatResult
+	}
+	var countArray = make([][2]int, len(antiCheatResults))
+	//count right and wrong judgement for each antiCheat
+	for j:=0;j<len(antiCheatResults[0]);j++{
+		var sum = 0
+		for i:=0;i<len(antiCheatResults);i++{
+			sum+=antiCheatResults[i][j]*antiCheatPriority[i]
+		}
+		for i:=0;i<len(antiCheatResults);i++{
+			if (sum>=0&&antiCheatResults[i][j] == 1)||(sum<0&&antiCheatResults[i][j] == -1){
+				countArray[i][0]++
+			}else{
+				countArray[i][1]++
+			}
+		}
+	}
+}
+
+func getAntiCheatResult(address string) []int, error {
+	if address == "" {
+		return nil, fmt.Errorf("Incorrect arguments. Expecting Address as string")
+	}
+	file :=shell.Run("curl "+address)
+	strs := strings.Split(file,"\n")
+	var result = make([]int, len(strs))
+	for i:=0;i<len(strs);i++{
+		m, err := strconv.Atoi(strings.Split(strs[i],"\t")[1])
+		if err!=nil{
+			return nil, fmt.Errorf("AntiCheat file content error")
+		}
+		result[i] = m
+	}
+	return result, nil
+}
+
+func calculateMoneyAndCredit(stub shim.ChaincodeStubInterface, countArray [][]int, antiCheatIds []string)error{
+	var sum float64
+	for _, num := range countArray{
+		sum+=num[0]
+	}
+	creditArray := calculateCredit(countArray)
+	for i:=0;i<len(antiCheatIds);i++{
+		accountAsBytes,err := stub.GetState(id)
+		if err!=nil{
+			return "", err
+		}
+		var account Account;
+		err = json.Unmarshal(accountAsBytes,&account)
+	    if err!=nil{
+	        return "", err
+	    }
+	    assets, err := strconv.ParseFloat(account.Assets, 64)
+	    assets+=countArray[i]/sum
+	    account.Assets = strconv.FormatFloat(assets, 'E', -1, 64)
+	    credit, err := strconv.ParseFloat(account.Credit, 64)
+	    credit+=creditArray[i]
+	    account.Credit = strconv.FormatFloat(credit, 'E', -1, 64)
+	    accountAsBytes, _ := json.Marshal(account)
+		stub.PutState(id, accountAsBytes)
+	}
+}
+
+func calculateCredit(countArray [][]int)[]float64{
+	var length = len(countArray)
+	var pointArray = make([]float64, length)
+	var sum float64
+	for i:=0;i<length;i++{
+		pointArray[i] = float64(countArray[i][0]*RIGHT_CREDIT-countArray[i][1]*WRONG_CREDIT)
+		sum+=pointArray[i]
+	}
+	avg:=sum/length
+	for i:=0;i<length;i++{
+		pointArray[i]-=avg
+	}
+	return pointArray
 }
 
 // main function starts up the chaincode in the container during instantiate

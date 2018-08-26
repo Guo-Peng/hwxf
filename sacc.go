@@ -235,7 +235,7 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string)
 	}
 
 	for k, v := range signatureContract.ContractSignature.Signature {
-		var publicKey, err = getAccountPublicKey(stub, k)
+		publicKey, err := getAccountPublicKey(stub, k)
 		if err != nil {
 			return err
 		}
@@ -249,8 +249,8 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string)
 
 	if (account.Type == "Advertiser") {
 		stub.PutState(signatureContract.Contract.MediaId + "_contract", sc)
-		for _, value := range signatureContract.Contract.AntiCheat_Ids {
-			stub.PutState(value + "_contract", []byte(signatureContractJson))
+		for _, value := range signatureContract.Contract.AntiCheatIds {
+			stub.PutState(value + "_contract", sc)
 		}
 	} else {
 		contractJson, _ := json.Marshal(signatureContract.Contract)
@@ -290,9 +290,13 @@ func mediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 	}
 
 	for k, v := range signatureContract.ContractSignature.Signature {
-		var publicKey = getAccountPublicKey(stub, k)
+		publicKey, err := getAccountPublicKey(stub, k)
+		if err != nil {
+			return err
+		}
 
-		valid, err := DSA.Verify(signatureContract.Contract, v, publicKey)
+		contractJson, _ := json.Marshal(signatureContract.Contract)
+		valid, err := DSA.Verify(string(contractJson), v, publicKey)
 		if !valid {
 			return fmt.Errorf(fmt.Sprintf("verify id %s failed", k))
 		}
@@ -305,7 +309,7 @@ func mediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 	signatureContract.ContractSignature.Signature[id] = signature
 	
 	signatureContractJson, _ := json.Marshal(signatureContract)
-	stub.PutState(string(keyByte), []byte(signatureContractJson))
+	stub.PutState(string(contractKey), []byte(signatureContractJson))
 	return nil
 }
 

@@ -78,6 +78,8 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 		result, err = getContractList(stub, args)
 	} else if fn == "getLogList" {
 		result, err = getLogList(stub, args)
+	} else if fn == "advertiserMediaAntiConfirm" {
+		err = advertiserMediaAntiConfirm(stub, args)
 	}
 	
 	if err != nil {
@@ -197,7 +199,11 @@ func generatorContract(stub shim.ChaincodeStubInterface, args []string) error {
 	return nil
 }
 
-func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface) error {
+func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("Incorrect arguments. Expecting 1 value")
+	}
+
 	id, err := cid.GetID(stub)
 	if err != nil {
 		return fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
@@ -229,16 +235,20 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface) error {
 	}
 
 	for k, v := range signatureContract.ContractSignature.Signature {
-		var publicKey = getAccountPublicKey(stub, k)
+		var publicKey, err = getAccountPublicKey(stub, k)
+		if err != nil {
+			return err
+		}
 
-		valid, err := DSA.Verify(signatureContract.Contract, v, publicKey)
+		contractJson, _ := json.Marshal(signatureContract.Contract)
+		valid, err := DSA.Verify(string(contractJson), v, publicKey)
 		if !valid {
 			return fmt.Errorf(fmt.Sprintf("verify id %s failed", k))
 		}
 	}
 
 	if (account.Type == "Advertiser") {
-		stub.PutState(signatureContract.Contract.MediaId + "_contract", []byte(signatureContractJson))
+		stub.PutState(signatureContract.Contract.MediaId + "_contract", sc)
 		for _, value := range signatureContract.Contract.AntiCheat_Ids {
 			stub.PutState(value + "_contract", []byte(signatureContractJson))
 		}
@@ -251,7 +261,7 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface) error {
 
 		signatureContract.ContractSignature.Signature[id] = signature
 		signatureContractJson, _ := json.Marshal(signatureContract)
-		stub.PutState(string(keyByte), []byte(signatureContractJson))
+		stub.PutState(string(contractKey), []byte(signatureContractJson))
 	}
 
 	return nil

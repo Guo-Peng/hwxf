@@ -159,9 +159,13 @@ func initContract(args []string, timeStamp int64, advertiserId string) Contract 
     return contract
 }
 
+/*
+* 0: contractKey
+* 1: true代表不判断时间直接返回广告主钱
+*/
 func advertiserChargeGet(stub shim.ChaincodeStubInterface, args []string) error {
-    if len(args) != 1 {
-        return fmt.Errorf("Incorrect arguments. Expecting 1 value")
+    if len(args) < 1 {
+        return fmt.Errorf("Incorrect arguments. Expecting less 1 value")
     }
 
     timePaymentByte, err := stub.GetState(args[0] + "_freeze")
@@ -180,8 +184,10 @@ func advertiserChargeGet(stub shim.ChaincodeStubInterface, args []string) error 
         return fmt.Errorf("timePayment format error: %s" , string(timePaymentByte))
     }
 
-    if timeStamp < int(time.Now().Unix()){
-        return fmt.Errorf("time is not up for your money: %d", timeStamp)
+    if len(args) < 2 || args[1] != "true"{
+        if timeStamp < int(time.Now().Unix()){
+            return fmt.Errorf("time is not up for your money: %d", timeStamp)
+        }
     }
 
     id, err := cid.GetID(stub)

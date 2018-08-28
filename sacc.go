@@ -180,8 +180,18 @@ func advertiserChargeGet(stub shim.ChaincodeStubInterface, args []string) error 
         return fmt.Errorf("timePayment format error: %s" , string(timePaymentByte))
     }
 
-    if timeStamp < time.Now().Unix(){
+    if timeStamp < int(time.Now().Unix()){
         return fmt.Errorf("time is not up for your money: %d", timeStamp)
+    }
+
+    id, err := cid.GetID(stub)
+    if err != nil {
+        return fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
+    }
+
+    ac, err := stub.GetState(id)
+    if err != nil {
+        return err
     }
 
     var account Account
@@ -218,10 +228,15 @@ func advertiserCharge(stub shim.ChaincodeStubInterface, advertiserId string, pay
         return err
     }
 
-    if account.Assets < payment {
+    assets, err := strconv.Atoi(account.Assets)
+    if err != nil {
+        return err
+    }
+
+    if assets < payment {
         return fmt.Errorf("advertiser has not enough Assets")
     }
-    Account.Assets -= payment
+    Account.Assets = string(assets - payment)
 
     accountAsBytes, _ := json.Marshal(account)
     stub.PutState(id, accountAsBytes)

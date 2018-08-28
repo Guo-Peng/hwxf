@@ -88,6 +88,10 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
         err = advertiserMediaAntiConfirm(stub, args)
     } else if fn == "settleAccount" {
         err = settleAccount(stub, args)
+    } else if fn == "getAllConfirmContractKey" {
+        result, err = getAllConfirmContractKey(stub)
+    } else if fn == "advertiserChargeGet" {
+        err = advertiserChargeGet(stub, args)
     }
 
     if err != nil {
@@ -159,6 +163,78 @@ func initContract(args []string, timeStamp int64, advertiserId string) Contract 
     return contract
 }
 
+func advertiserChargeGet(stub shim.ChaincodeStubInterface, args []string) error {
+    if len(args) != 1 {
+        return fmt.Errorf("Incorrect arguments. Expecting 1 value")
+    }
+
+    timePaymentByte, err := stub.GetState(args[0] + "_freeze")
+    if err != nil {
+        return err
+    }
+
+    timePayment := strings.Split(string(timePaymentByte), "_")
+    if len(timePayment) != 2{
+        return fmt.Errorf("timePayment format error: %s" , string(timePaymentByte))
+    }
+
+    timeStamp, err1 := strconv.Atoi(args[0])
+    payment, err2 := strconv.Atoi(args[1])
+    if err1 != nil || err2 != nil {
+        return fmt.Errorf("timePayment format error: %s" , string(timePaymentByte))
+    }
+
+    if timeStamp < time.Now().Unix(){
+        return fmt.Errorf("time is not up for your money: %d", timeStamp)
+    }
+
+    var account Account
+    err = json.Unmarshal(ac, &account)
+    if err != nil {
+        return err
+    }
+    Account.Assets += payment
+
+    accountAsBytes, _ := json.Marshal(account)
+    stub.PutState(id, accountAsBytes)
+    return nil
+}
+
+/*
+* 0: advertiser id
+* 1: payment
+* 2: contractKey
+*/
+func advertiserCharge(stub shim.ChaincodeStubInterface, advertiserId string, paymentStr string, contractKey string) error {
+    payment, err := strconv.Atoi(paymentStr)
+    if err != nil {
+        return err
+    }
+
+    ac, err := stub.GetState(advertiserId)
+    if err != nil {
+        return err
+    }
+
+    var account Account
+    err = json.Unmarshal(ac, &account)
+    if err != nil {
+        return err
+    }
+
+    if account.Assets < payment {
+        return fmt.Errorf("advertiser has not enough Assets")
+    }
+    Account.Assets -= payment
+
+    accountAsBytes, _ := json.Marshal(account)
+    stub.PutState(id, accountAsBytes)
+
+    timeStamp := time.Now().Unix()
+    stub.PutState(contractKey + "_freeze", []byte(fmt.Sprintf("%d_%d", timeStamp + 86400*7, payment)))
+    return nil
+}
+
 /*
 * 0: Media_Id
 * 1: AntiCheat_Ids
@@ -191,8 +267,14 @@ func generatorContract(stub shim.ChaincodeStubInterface, args []string) error {
     if err != nil {
         return err
     }
-    signatureContract.ContractSignature.Signature[id] = signature
+    
+    // 冻结合约金额
+    err := advertiserCharge(stub, id, args[3], key)
+    if err != nil {
+        return err
+    }
 
+    signatureContract.ContractSignature.Signature[id] = signature
     signatureContractJson, _ := json.Marshal(signatureContract)
     stub.PutState(key, []byte(signatureContractJson))
 
@@ -205,9 +287,29 @@ func generatorContract(stub shim.ChaincodeStubInterface, args []string) error {
     return nil
 }
 
+func getAllConfirmContractKey(stub shim.ChaincodeStubInterface) (string, error) {
+    id, err := cid.GetID(stub)
+    if err != nil {
+        return "", fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
+    }
+
+    it, err := stub.GetHistoryForKey(id + "_confirm")
+    if err != nil {
+        return "", err
+    }
+
+    resultList := getHistoryListResult(it)
+    return strings.Join(resultList, "\n"), nil
+}
+
+
+/*
+* 0: privateKey path
+* 1: contractKey
+*/
 func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string) error {
-    if len(args) != 1 {
-        return fmt.Errorf("Incorrect arguments. Expecting 1 value")
+    if len(args) != 2 {
+        return fmt.Errorf("Incorrect arguments. Expecting 2 value")
     }
 
     id, err := cid.GetID(stub)
@@ -216,18 +318,17 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string)
     }
 
     ac, err := stub.GetState(id)
+    if err != nil {
+        return err
+    }
+
     var account Account
     err = json.Unmarshal(ac, &account)
     if err != nil {
         return err
     }
 
-    contractKey, err := stub.GetState(id + "_confirm")
-    if err != nil {
-        return err
-    }
-
-    sc, err := stub.GetState(string(contractKey))
+    sc, err := stub.GetState(args[1])
     var signatureContract SignatureContract
     err = json.Unmarshal(sc, &signatureContract)
     if err != nil {
@@ -270,52 +371,6 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string)
         stub.PutState(string(contractKey), []byte(signatureContractJson))
     }
 
-    return nil
-}
-
-func mediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string) error {
-    if len(args) != 1 {
-        return fmt.Errorf("Incorrect arguments. Expecting 1 value")
-    }
-
-    id, err := cid.GetID(stub)
-    if err != nil {
-        return fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
-    }
-
-    contractKey, err := stub.GetState(id + "_contract")
-    if err != nil {
-        return err
-    }
-
-    sc, err := stub.GetState(string(contractKey))
-    var signatureContract SignatureContract
-    err = json.Unmarshal(sc, &signatureContract)
-    if err != nil {
-        return err
-    }
-
-    for k, v := range signatureContract.ContractSignature.Signature {
-        publicKey, err := getAccountPublicKey(stub, k)
-        if err != nil {
-            return err
-        }
-
-        contractJson, _ := json.Marshal(signatureContract.Contract)
-        valid, err := DSA.Verify(string(contractJson), v, publicKey)
-        if !valid {
-            return fmt.Errorf(fmt.Sprintf("verify id %s failed", k))
-        }
-    }
-    contractJson, _ := json.Marshal(signatureContract.Contract)
-    signature, err := DSA.Sign(string(contractJson), args[0])
-    if err != nil {
-        return err
-    }
-    signatureContract.ContractSignature.Signature[id] = signature
-
-    signatureContractJson, _ := json.Marshal(signatureContract)
-    stub.PutState(string(contractKey), []byte(signatureContractJson))
     return nil
 }
 

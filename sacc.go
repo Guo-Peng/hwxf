@@ -204,7 +204,7 @@ func advertiserChargeGet(stub shim.ChaincodeStubInterface, args []string) error 
     if err != nil {
         return err
     }
-    Account.Assets = string(assets + payment)
+    account.Assets = string(assets + payment)
 
     accountAsBytes, _ := json.Marshal(account)
     stub.PutState(id, accountAsBytes)
@@ -241,10 +241,10 @@ func advertiserCharge(stub shim.ChaincodeStubInterface, advertiserId string, pay
     if assets < payment {
         return fmt.Errorf("advertiser has not enough Assets")
     }
-    Account.Assets = string(assets - payment)
+    account.Assets = string(assets - payment)
 
     accountAsBytes, _ := json.Marshal(account)
-    stub.PutState(id, accountAsBytes)
+    stub.PutState(advertiserId, accountAsBytes)
 
     timeStamp := time.Now().Unix()
     stub.PutState(contractKey + "_freeze", []byte(fmt.Sprintf("%d_%d", timeStamp + 86400*7, payment)))
@@ -371,9 +371,9 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string)
     }
 
     if account.Type == "Advertiser" {
-        stub.PutState(signatureContract.Contract.MediaId+"_contract", args[1])
+        stub.PutState(signatureContract.Contract.MediaId+"_contract", []byte(args[1]))
         for _, value := range signatureContract.Contract.AntiCheatIds {
-            stub.PutState(value+"_contract", args[1])
+            stub.PutState(value+"_contract", []byte(args[1]))
         }
     } else {
         contractJson, _ := json.Marshal(signatureContract.Contract)
@@ -384,7 +384,7 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string)
 
         signatureContract.ContractSignature.Signature[id] = signature
         signatureContractJson, _ := json.Marshal(signatureContract)
-        stub.PutState(string(contractKey), []byte(signatureContractJson))
+        stub.PutState(args[1], []byte(signatureContractJson))
     }
 
     return nil

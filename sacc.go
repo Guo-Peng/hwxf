@@ -178,8 +178,8 @@ func advertiserChargeGet(stub shim.ChaincodeStubInterface, args []string) error 
         return fmt.Errorf("timePayment format error: %s" , string(timePaymentByte))
     }
 
-    timeStamp, err1 := strconv.Atoi(args[0])
-    payment, err2 := strconv.Atoi(args[1])
+    timeStamp, err1 := strconv.Atoi(timePayment[0])
+    payment, err2 := strconv.Atoi(timePayment[1])
     if err1 != nil || err2 != nil {
         return fmt.Errorf("timePayment format error: %s" , string(timePaymentByte))
     }

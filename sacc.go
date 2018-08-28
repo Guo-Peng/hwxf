@@ -199,7 +199,12 @@ func advertiserChargeGet(stub shim.ChaincodeStubInterface, args []string) error 
     if err != nil {
         return err
     }
-    Account.Assets += payment
+
+    assets, err := strconv.Atoi(account.Assets)
+    if err != nil {
+        return err
+    }
+    Account.Assets = string(assets + payment)
 
     accountAsBytes, _ := json.Marshal(account)
     stub.PutState(id, accountAsBytes)
@@ -280,7 +285,7 @@ func generatorContract(stub shim.ChaincodeStubInterface, args []string) error {
     }
     
     // 冻结合约金额
-    err := advertiserCharge(stub, id, args[3], key)
+    err = advertiserCharge(stub, id, args[3], key)
     if err != nil {
         return err
     }
@@ -366,9 +371,9 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string)
     }
 
     if account.Type == "Advertiser" {
-        stub.PutState(signatureContract.Contract.MediaId+"_contract", contractKey)
+        stub.PutState(signatureContract.Contract.MediaId+"_contract", args[1])
         for _, value := range signatureContract.Contract.AntiCheatIds {
-            stub.PutState(value+"_contract", contractKey)
+            stub.PutState(value+"_contract", args[1])
         }
     } else {
         contractJson, _ := json.Marshal(signatureContract.Contract)

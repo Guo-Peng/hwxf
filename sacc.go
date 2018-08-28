@@ -79,7 +79,7 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
     } else if fn == "mediaSubmit" {
         err = mediaSubmit(stub, args)
     } else if fn == "getContract" {
-        result, err = getContract(stub, args)
+        result, err = getContract(stub, args[0])
     } else if fn == "getContractList" {
         result, err = getContractList(stub, args)
     } else if fn == "getLogList" {
@@ -112,10 +112,6 @@ func setAccount(stub shim.ChaincodeStubInterface, args []string) (string, error)
     id, err := cid.GetID(stub)
     if err != nil {
         return "", fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
-    }
-    mspid, err := cid.GetMSPID(stub)
-    if err != nil {
-        return "", fmt.Errorf(fmt.Sprintf("Could not Get MSP ID, err %s", err))
     }
     fmt.Printf("Id:\n%s\n", id)
     fmt.Printf("Type:\n%s\n", args[0])
@@ -609,4 +605,3 @@ func main() {
         fmt.Printf("Error starting SimpleAsset chaincode: %s", err)
     }
 }
-

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -87,6 +88,8 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 		result, err = getLogList(stub, args)
 	} else if fn == "advertiserMediaAntiConfirm" {
 		err = advertiserMediaAntiConfirm(stub, args)
+	} else if fn == "anticheatConfirm" {
+		err = anticheatConfirm(stub, args)
 	} else if fn == "settleAccount" {
 		err = settleAccount(stub, args)
 	} else if fn == "getAllConfirmContractKey" {
@@ -518,7 +521,6 @@ func anticheatConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 		return err
 	}
 	logJson, err := json.Marshal(mediaLogSubmit.Log)
-	//TODO DSA.Verify(privateKey)
 	for id, sig := range mediaLogSubmit.ContractSignature.Signature {
 		acc, _ := stub.GetState(id)
 		var account Account
@@ -542,11 +544,20 @@ func anticheatConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 	mediaLogSubmit.ContractSignature.Signature[id] = sig
 
 	//put filelocation
-	mediaLogSubmit.Log.AntiCheatResultAddress = append(mediaLogSubmit.Log.AntiCheatResultAddress, fileLocation)
+	mediaLogSubmit.Log.AntiCheatResultAddress = append(mediaLogSubmit.Log.AntiCheatResultAddress, id+"\t"+fileLocation)
 
 	//if all have signed
 	if mediaLogSubmit.Log.AntiCheatNum == len(mediaLogSubmit.Log.AntiCheatResultAddress) {
-
+		contractId := strings.Split(logId, "_")[0]
+		buf := new(bytes.Buffer)
+		for _, address := range mediaLogSubmit.Log.AntiCheatResultAddress {
+			buf.WriteString(address)
+			buf.WriteString(",")
+		}
+		arg := make([]string, 0)
+		arg = append(arg, contractId)
+		arg = append(arg, buf.String())
+		return settleAccount(stub, arg)
 	}
 	return nil
 }
@@ -679,7 +690,9 @@ func payToMedia(stub shim.ChaincodeStubInterface, sc Contract, realFlow float64,
 		assets += amount
 		mediaAccount.Assets = strconv.FormatFloat(assets, 'E', -1, 64)
 	} else { //if media doesn't meet the demand, restore the money to advertiser
-
+		arg := make([]string, 0)
+		arg = append(arg, "false")
+		advertiserChargeGet(stub, arg)
 	}
 	accountAsBytes, _ := json.Marshal(mediaAccount)
 	stub.PutState(sc.MediaId, accountAsBytes)

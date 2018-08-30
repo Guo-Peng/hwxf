@@ -435,7 +435,7 @@ func getHistoryListResult(resultsIterator shim.HistoryQueryIteratorInterface) []
 			continue
 		}
 		//item, _ := json.Marshal(queryResponse)
-		s = append(s, string(queryResponse))
+		s = append(s, string(queryResponse.Value))
 	}
 	return s
 }

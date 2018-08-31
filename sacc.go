@@ -86,8 +86,8 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 		result, err = getContractList(stub, args)
 	} else if fn == "getLogList" {
 		result, err = getLogList(stub, args)
-	} else if fn == "advertiserMediaAntiConfirm" {
-		err = advertiserMediaAntiConfirm(stub, args)
+	} else if fn == "mediaAntiConfirm" {
+		err = mediaAntiConfirm(stub, args)
 	} else if fn == "anticheatConfirm" {
 		err = anticheatConfirm(stub, args)
 	} else if fn == "settleAccount" {
@@ -304,7 +304,7 @@ func generatorContract(stub shim.ChaincodeStubInterface, args []string) error {
 	signatureContractJson, _ := json.Marshal(signatureContract)
 	stub.PutState(key, []byte(signatureContractJson))
 
-	stub.PutState(id+"_confirm", []byte(key))
+    stub.PutState(id+"_confirm", []byte(key))
 	stub.PutState(args[0]+"_confirm", []byte(key))
 	antiCheatIds := strings.Split(args[1], ",")
 	for _, value := range antiCheatIds {
@@ -332,7 +332,7 @@ func getAllConfirmContractKey(stub shim.ChaincodeStubInterface) (string, error) 
 * 0: privateKey path
 * 1: contractKey
  */
-func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string) error {
+func mediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 	if len(args) != 2 {
 		return fmt.Errorf("Incorrect arguments. Expecting 2 value")
 	}
@@ -342,28 +342,11 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string)
 		return fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
 	}
 
-	ac, err := stub.GetState(id)
-	if err != nil {
-		return err
-	}
-
-	var account Account
-	err = json.Unmarshal(ac, &account)
-	if err != nil {
-		return err
-	}
-
 	sc, err := stub.GetState(args[1])
 	var signatureContract SignatureContract
 	err = json.Unmarshal(sc, &signatureContract)
 	if err != nil {
 		return err
-	}
-
-	if account.Type == "Advertiser" {
-		if len(signatureContract.ContractSignature.Signature) != len(signatureContract.Contract.AntiCheatIds)+2 {
-			return nil
-		}
 	}
 
 	for k, v := range signatureContract.ContractSignature.Signature {
@@ -379,23 +362,23 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string)
 		}
 	}
 
-	if account.Type == "Advertiser" {
-		stub.PutState(signatureContract.Contract.MediaId+"_contract", []byte(args[1]))
-		for _, value := range signatureContract.Contract.AntiCheatIds {
-			stub.PutState(value+"_contract", []byte(args[1]))
-		}
-	} else {
-		contractJson, _ := json.Marshal(signatureContract.Contract)
-		signature, err := DSA.Sign(string(contractJson), args[0])
-		if err != nil {
-			return err
-		}
-
-		signatureContract.ContractSignature.Signature[id] = signature
-		signatureContractJson, _ := json.Marshal(signatureContract)
-		stub.PutState(args[1], []byte(signatureContractJson))
+	contractJson, _ := json.Marshal(signatureContract.Contract)
+	signature, err := DSA.Sign(string(contractJson), args[0])
+	if err != nil {
+		return err
 	}
 
+    signatureContract.ContractSignature.Signature[id] = signature
+	signatureContractJson, _ := json.Marshal(signatureContract)
+    stub.PutState(args[1], []byte(signatureContractJson))
+    
+    if len(signatureContract.ContractSignature.Signature) == len(signatureContract.Contract.AntiCheatIds) + 2 {
+        stub.PutState(signatureContract.Contract.AdvertiserId+"_contract", []byte(args[1]))
+        stub.PutState(signatureContract.Contract.MediaId+"_contract", []byte(args[1]))
+        for _, value := range signatureContract.Contract.AntiCheatIds {
+            stub.PutState(value+"_contract", []byte(args[1]))
+        }
+    }
 	return nil
 }
 

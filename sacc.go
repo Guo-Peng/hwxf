@@ -76,6 +76,8 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 
 	if fn == "setAccount" {
 		result, err = setAccount(stub, args)
+	} else if fn == "getAccount" {
+		result, err = getAccount(stub, args)
 	} else if fn == "generatorContract" {
 		err = generatorContract(stub, args)
 	} else if fn == "mediaSubmit" {
@@ -743,6 +745,14 @@ func calculateCredit(countArray [][2]int) []float64 {
 		pointArray[i] -= avg
 	}
 	return pointArray
+}
+
+func getAccount(stub shim.ChaincodeStubInterface, args []string) (string, error) {
+	if len(args) != 1 {
+		return "", fmt.Errorf("Incorrect arguments. Expecting 1 argument")
+	}
+	accountAsBytes, err := stub.GetState(args[0])
+	return string(accountAsBytes), err
 }
 
 func getAccountInfo(stub shim.ChaincodeStubInterface, id string) (Account, error) {

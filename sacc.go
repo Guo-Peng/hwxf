@@ -272,8 +272,8 @@ func advertiserCharge(stub shim.ChaincodeStubInterface, advertiserId string, pay
 * 7: PrivateKey
  */
 func generatorContract(stub shim.ChaincodeStubInterface, args []string) error {
-	if len(args) != 9 {
-		return fmt.Errorf("Incorrect arguments. Expecting 9 value")
+	if len(args) != 8 {
+		return fmt.Errorf("Incorrect arguments. Expecting 8 value")
 	}
 
 	id, err := cid.GetID(stub)

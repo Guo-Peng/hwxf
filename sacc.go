@@ -26,10 +26,10 @@ type SimpleAsset struct {
 }
 
 type Account struct {
-	Type      string `json:"type"`
-	Credit    string `json:"credit"`
-	Assets    string `json:"assets"`
-	PublicKey string `json:"public_key"`
+	Type      string
+	Credit    string
+	Assets    string
+	PublicKey string
 }
 
 type Contract struct {
@@ -76,8 +76,10 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 
 	if fn == "setAccount" {
 		result, err = setAccount(stub, args)
+	} else if fn == "getAccount" {
+		result, err = getAccount(stub, args)
 	} else if fn == "generatorContract" {
-		err = generatorContract(stub, args)
+		result, err = generatorContract(stub, args)
 	} else if fn == "mediaSubmit" {
 		err = mediaSubmit(stub, args)
 	} else if fn == "getContract" {
@@ -86,14 +88,14 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 		result, err = getContractList(stub, args)
 	} else if fn == "getLogList" {
 		result, err = getLogList(stub, args)
-	} else if fn == "advertiserMediaAntiConfirm" {
-		err = advertiserMediaAntiConfirm(stub, args)
+	} else if fn == "mediaAntiConfirm" {
+		err = mediaAntiConfirm(stub, args)
 	} else if fn == "anticheatConfirm" {
 		err = anticheatConfirm(stub, args)
 	} else if fn == "settleAccount" {
 		err = settleAccount(stub, args)
 	} else if fn == "getAllConfirmContractKey" {
-		result, err = getAllConfirmContractKey(stub)
+		result, err = getAllConfirmContractKey(stub, args)
 	} else if fn == "advertiserChargeGet" {
 		err = advertiserChargeGet(stub, args)
 	}
@@ -183,7 +185,7 @@ func advertiserChargeGet(stub shim.ChaincodeStubInterface, args []string) error 
 	}
 
 	timeStamp, err1 := strconv.Atoi(timePayment[0])
-	payment, err2 := strconv.Atoi(timePayment[1])
+	payment, err2 := strconv.ParseFloat(timePayment[1], 64)
 	if err1 != nil || err2 != nil {
 		return fmt.Errorf("timePayment format error: %s", string(timePaymentByte))
 	}
@@ -210,11 +212,11 @@ func advertiserChargeGet(stub shim.ChaincodeStubInterface, args []string) error 
 		return err
 	}
 
-	assets, err := strconv.Atoi(account.Assets)
+	assets, err := strconv.ParseFloat(account.Assets, 64)
 	if err != nil {
-		return err
+		return fmt.Errorf("acouont.Assets format error1: %s", string(account.Assets))
 	}
-	account.Assets = string(assets + payment)
+	account.Assets = strconv.FormatFloat(assets+payment, 'E', -1, 64)
 
 	accountAsBytes, _ := json.Marshal(account)
 	stub.PutState(id, accountAsBytes)
@@ -227,9 +229,9 @@ func advertiserChargeGet(stub shim.ChaincodeStubInterface, args []string) error 
 * 2: contractKey
  */
 func advertiserCharge(stub shim.ChaincodeStubInterface, advertiserId string, paymentStr string, contractKey string) error {
-	payment, err := strconv.Atoi(paymentStr)
+	payment, err := strconv.ParseFloat(paymentStr, 64)
 	if err != nil {
-		return err
+		return fmt.Errorf("payment format error1: %s", string(paymentStr))
 	}
 
 	ac, err := stub.GetState(advertiserId)
@@ -243,15 +245,15 @@ func advertiserCharge(stub shim.ChaincodeStubInterface, advertiserId string, pay
 		return err
 	}
 
-	assets, err := strconv.Atoi(account.Assets)
+	assets, err := strconv.ParseFloat(account.Assets, 64)
 	if err != nil {
-		return err
+		return fmt.Errorf("acouont.Assets format error2: %s", string(account.Assets))
 	}
 
 	if assets < payment {
 		return fmt.Errorf("advertiser has not enough Assets")
 	}
-	account.Assets = string(assets - payment)
+	account.Assets = strconv.FormatFloat(assets-payment, 'E', -1, 64)
 
 	accountAsBytes, _ := json.Marshal(account)
 	stub.PutState(advertiserId, accountAsBytes)
@@ -271,36 +273,35 @@ func advertiserCharge(stub shim.ChaincodeStubInterface, advertiserId string, pay
 * 6: AntiCheat_Priority
 * 7: PrivateKey
  */
-func generatorContract(stub shim.ChaincodeStubInterface, args []string) error {
-	if len(args) != 9 {
-		return fmt.Errorf("Incorrect arguments. Expecting 9 value")
+func generatorContract(stub shim.ChaincodeStubInterface, args []string) (string, error) {
+	if len(args) != 8 {
+		return "", fmt.Errorf("Incorrect arguments. Expecting 8 value")
 	}
-
 	id, err := cid.GetID(stub)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
+		return "", fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
 	}
 	timeStamp := time.Now().Unix()
 	key := fmt.Sprintf("%s_%s_%s_%d", id, args[0], args[1], timeStamp)
 
-	contract := initContract(args[:6], timeStamp, id)
-
+	contract := initContract(args[:7], timeStamp, id)
 	var signatureContract SignatureContract
 	signatureContract.Contract = contract
-
 	contractJson, _ := json.Marshal(contract)
 	signature, err := DSA.Sign(string(contractJson), args[7])
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// 冻结合约金额
 	err = advertiserCharge(stub, id, args[3], key)
 	if err != nil {
-		return err
+		return "", err
 	}
-
-	signatureContract.ContractSignature.Signature[id] = signature
+	var contractSignature ContractSignature
+	contractSignature.Signature = make(map[string][]byte, 0)
+	contractSignature.Signature[id] = signature
+	signatureContract.ContractSignature = contractSignature
 	signatureContractJson, _ := json.Marshal(signatureContract)
 	stub.PutState(key, []byte(signatureContractJson))
 
@@ -310,10 +311,10 @@ func generatorContract(stub shim.ChaincodeStubInterface, args []string) error {
 	for _, value := range antiCheatIds {
 		stub.PutState(value+"_confirm", []byte(key))
 	}
-	return nil
+	return key, nil
 }
 
-func getAllConfirmContractKey(stub shim.ChaincodeStubInterface) (string, error) {
+func getAllConfirmContractKey(stub shim.ChaincodeStubInterface, args []string) (string, error) {
 	id, err := cid.GetID(stub)
 	if err != nil {
 		return "", fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
@@ -332,7 +333,7 @@ func getAllConfirmContractKey(stub shim.ChaincodeStubInterface) (string, error) 
 * 0: privateKey path
 * 1: contractKey
  */
-func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string) error {
+func mediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 	if len(args) != 2 {
 		return fmt.Errorf("Incorrect arguments. Expecting 2 value")
 	}
@@ -342,28 +343,11 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string)
 		return fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
 	}
 
-	ac, err := stub.GetState(id)
-	if err != nil {
-		return err
-	}
-
-	var account Account
-	err = json.Unmarshal(ac, &account)
-	if err != nil {
-		return err
-	}
-
 	sc, err := stub.GetState(args[1])
 	var signatureContract SignatureContract
 	err = json.Unmarshal(sc, &signatureContract)
 	if err != nil {
 		return err
-	}
-
-	if account.Type == "Advertiser" {
-		if len(signatureContract.ContractSignature.Signature) != len(signatureContract.Contract.AntiCheatIds)+2 {
-			return nil
-		}
 	}
 
 	for k, v := range signatureContract.ContractSignature.Signature {
@@ -379,23 +363,23 @@ func advertiserMediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string)
 		}
 	}
 
-	if account.Type == "Advertiser" {
+	contractJson, _ := json.Marshal(signatureContract.Contract)
+	signature, err := DSA.Sign(string(contractJson), args[0])
+	if err != nil {
+		return err
+	}
+
+	signatureContract.ContractSignature.Signature[id] = signature
+	signatureContractJson, _ := json.Marshal(signatureContract)
+	stub.PutState(args[1], []byte(signatureContractJson))
+
+	if len(signatureContract.ContractSignature.Signature) == len(signatureContract.Contract.AntiCheatIds)+2 {
+		stub.PutState(signatureContract.Contract.AdvertiserId+"_contract", []byte(args[1]))
 		stub.PutState(signatureContract.Contract.MediaId+"_contract", []byte(args[1]))
 		for _, value := range signatureContract.Contract.AntiCheatIds {
 			stub.PutState(value+"_contract", []byte(args[1]))
 		}
-	} else {
-		contractJson, _ := json.Marshal(signatureContract.Contract)
-		signature, err := DSA.Sign(string(contractJson), args[0])
-		if err != nil {
-			return err
-		}
-
-		signatureContract.ContractSignature.Signature[id] = signature
-		signatureContractJson, _ := json.Marshal(signatureContract)
-		stub.PutState(args[1], []byte(signatureContractJson))
 	}
-
 	return nil
 }
 
@@ -434,8 +418,8 @@ func getHistoryListResult(resultsIterator shim.HistoryQueryIteratorInterface) []
 		if err != nil {
 			continue
 		}
-		item, _ := json.Marshal(queryResponse)
-		s = append(s, string(item))
+		//item, _ := json.Marshal(queryResponse)
+		s = append(s, string(queryResponse.Value))
 	}
 	return s
 }

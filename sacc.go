@@ -56,7 +56,7 @@ type SignatureContract struct {
 type Log struct {
 	Address                string
 	TimeStamp              int64
-	AntiCheatResultAddress []string
+	AntiCheatResultAddress map[string]string
 	AntiCheatNum           int
 }
 
@@ -220,7 +220,7 @@ func advertiserChargeGet(stub shim.ChaincodeStubInterface, args []string) error 
 
 	accountAsBytes, _ := json.Marshal(account)
 	stub.PutState(id, accountAsBytes)
-    stub.PutState(args[0] + "_freeze", []byte(fmt.Sprintf("%d_%f", timeStamp+86400*7, 0.0)
+    stub.PutState(args[0] + "_freeze", []byte(fmt.Sprintf("%d_%f", timeStamp+86400*7, 0.0)))
 	return nil
 }
 
@@ -454,7 +454,7 @@ func mediaSubmit(stub shim.ChaincodeStubInterface, args []string) error {
 		return fmt.Errorf("Could not submit, at Least one AntiCheatOrg not signed.")
 	}
 	//#######
-	log := Log{Address: fileLocation, AntiCheatNum: len(antiCheatIds)}
+	log := Log{Address: fileLocation, AntiCheatNum: len(antiCheatIds), AntiCheatResultAddress: make(map[string]string, 0)}
 	logJson, _ := json.Marshal(log)
 	signature, err := DSA.Sign(string(logJson), privateKey)
 	if err != nil {
@@ -529,14 +529,15 @@ func anticheatConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 	mediaLogSubmit.ContractSignature.Signature[id] = sig
 
 	//put filelocation
-	mediaLogSubmit.Log.AntiCheatResultAddress = append(mediaLogSubmit.Log.AntiCheatResultAddress, id+"\t"+fileLocation)
-
+	mediaLogSubmit.Log.AntiCheatResultAddress[id] = fileLocation
+    mediaLogSubmitJson, _ := json.Marshal(mediaLogSubmit)
+    stub.PutState(logId, []byte(mediaLogSubmitJson))
 	//if all have signed
 	if mediaLogSubmit.Log.AntiCheatNum == len(mediaLogSubmit.Log.AntiCheatResultAddress) {
 		contractId := strings.Split(logId, "_")[0]
 		buf := new(bytes.Buffer)
-		for _, address := range mediaLogSubmit.Log.AntiCheatResultAddress {
-			buf.WriteString(address)
+		for id, address := range mediaLogSubmit.Log.AntiCheatResultAddress {
+			buf.WriteString(id+"\t"+address)
 			buf.WriteString(",")
 		}
 		arg := make([]string, 0)

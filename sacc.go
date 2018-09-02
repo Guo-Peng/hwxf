@@ -56,13 +56,13 @@ type SignatureContract struct {
 type Log struct {
 	Address                string
 	TimeStamp              int64
-	AntiCheatResultAddress map[string]string
 	AntiCheatNum           int
 }
 
 type MediaLogSubmit struct {
 	Log               Log
 	ContractSignature ContractSignature
+	AntiCheatResultAddress map[string]string
 }
 
 func (t *SimpleAsset) Init(stub shim.ChaincodeStubInterface) peer.Response {
@@ -454,14 +454,14 @@ func mediaSubmit(stub shim.ChaincodeStubInterface, args []string) error {
 		return fmt.Errorf("Could not submit, at Least one AntiCheatOrg not signed.")
 	}
 	//#######
-	log := Log{Address: fileLocation, AntiCheatNum: len(antiCheatIds), AntiCheatResultAddress: make(map[string]string, 0)}
+	log := Log{Address: fileLocation, AntiCheatNum: len(antiCheatIds)}
 	logJson, _ := json.Marshal(log)
 	signature, err := DSA.Sign(string(logJson), privateKey)
 	if err != nil {
 		return err
 	}
 	contractSignature := ContractSignature{Signature: map[string][]byte{id: signature}}
-	mediaLogSubmit := MediaLogSubmit{Log: log, ContractSignature: contractSignature}
+	mediaLogSubmit := MediaLogSubmit{Log: log, ContractSignature: contractSignature, AntiCheatResultAddress: make(map[string]string, 0)}
 	mls, _ := json.Marshal(mediaLogSubmit)
 	stub.PutState(contractId+"_log", mls)
 	//######
@@ -529,14 +529,14 @@ func anticheatConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 	mediaLogSubmit.ContractSignature.Signature[id] = sig
 
 	//put filelocation
-	mediaLogSubmit.Log.AntiCheatResultAddress[id] = fileLocation
+	mediaLogSubmit.AntiCheatResultAddress[id] = fileLocation
     mediaLogSubmitJson, _ := json.Marshal(mediaLogSubmit)
     stub.PutState(logId, []byte(mediaLogSubmitJson))
 	//if all have signed
-	if mediaLogSubmit.Log.AntiCheatNum == len(mediaLogSubmit.Log.AntiCheatResultAddress) {
+	if mediaLogSubmit.Log.AntiCheatNum == len(mediaLogSubmit.AntiCheatResultAddress) {
 		contractId := strings.Split(logId, "_")[0]
 		buf := new(bytes.Buffer)
-		for id, address := range mediaLogSubmit.Log.AntiCheatResultAddress {
+		for id, address := range mediaLogSubmit.AntiCheatResultAddress {
 			buf.WriteString(id+"\t"+address)
 			buf.WriteString(",")
 		}

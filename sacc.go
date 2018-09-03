@@ -8,7 +8,9 @@ import (
 	"github.com/hyperledger/fabric/core/chaincode/lib/cid"
 	"github.com/hyperledger/fabric/core/chaincode/shim"
 	"github.com/hyperledger/fabric/protos/peer"
-	"os/exec"
+	//"os/exec"
+    "net/http"
+    "io/ioutil"
 	"strconv"
 	"strings"
 	"time"
@@ -26,10 +28,10 @@ type SimpleAsset struct {
 }
 
 type Account struct {
-	Type      string `json:"type"`
-	Credit    string `json:"credit"`
-	Assets    string `json:"assets"`
-	PublicKey string `json:"public_key"`
+	Type      string
+	Credit    string
+	Assets    string
+	PublicKey string
 }
 
 type Contract struct {
@@ -56,13 +58,13 @@ type SignatureContract struct {
 type Log struct {
 	Address                string
 	TimeStamp              int64
-	AntiCheatResultAddress []string
 	AntiCheatNum           int
 }
 
 type MediaLogSubmit struct {
 	Log               Log
 	ContractSignature ContractSignature
+	AntiCheatResultAddress map[string]string
 }
 
 func (t *SimpleAsset) Init(stub shim.ChaincodeStubInterface) peer.Response {
@@ -76,8 +78,10 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 
 	if fn == "setAccount" {
 		result, err = setAccount(stub, args)
+	} else if fn == "getAccount" {
+		result, err = getAccount(stub, args)
 	} else if fn == "generatorContract" {
-		err = generatorContract(stub, args)
+		result, err = generatorContract(stub, args)
 	} else if fn == "mediaSubmit" {
 		err = mediaSubmit(stub, args)
 	} else if fn == "getContract" {
@@ -93,7 +97,7 @@ func (t *SimpleAsset) Invoke(stub shim.ChaincodeStubInterface) peer.Response {
 	} else if fn == "settleAccount" {
 		err = settleAccount(stub, args)
 	} else if fn == "getAllConfirmContractKey" {
-		result, err = getAllConfirmContractKey(stub)
+		result, err = getAllConfirmContractKey(stub, args)
 	} else if fn == "advertiserChargeGet" {
 		err = advertiserChargeGet(stub, args)
 	}
@@ -183,13 +187,13 @@ func advertiserChargeGet(stub shim.ChaincodeStubInterface, args []string) error 
 	}
 
 	timeStamp, err1 := strconv.Atoi(timePayment[0])
-	payment, err2 := strconv.Atoi(timePayment[1])
+	payment, err2 := strconv.ParseFloat(timePayment[1], 64)
 	if err1 != nil || err2 != nil {
 		return fmt.Errorf("timePayment format error: %s", string(timePaymentByte))
 	}
 
 	if len(args) < 2 || args[1] != "true" {
-		if timeStamp < int(time.Now().Unix()) {
+		if timeStamp > int(time.Now().Unix()) {
 			return fmt.Errorf("time is not up for your money: %d", timeStamp)
 		}
 	}
@@ -210,14 +214,15 @@ func advertiserChargeGet(stub shim.ChaincodeStubInterface, args []string) error 
 		return err
 	}
 
-	assets, err := strconv.Atoi(account.Assets)
+	assets, err := strconv.ParseFloat(account.Assets, 64)
 	if err != nil {
-		return err
+		return fmt.Errorf("acouont.Assets format error1: %s", string(account.Assets))
 	}
-	account.Assets = string(assets + payment)
+	account.Assets = strconv.FormatFloat(assets+payment, 'E', -1, 64)
 
 	accountAsBytes, _ := json.Marshal(account)
 	stub.PutState(id, accountAsBytes)
+    stub.PutState(args[0] + "_freeze", []byte(fmt.Sprintf("%d_%f", timeStamp+86400*7, 0.0)))
 	return nil
 }
 
@@ -227,9 +232,9 @@ func advertiserChargeGet(stub shim.ChaincodeStubInterface, args []string) error 
 * 2: contractKey
  */
 func advertiserCharge(stub shim.ChaincodeStubInterface, advertiserId string, paymentStr string, contractKey string) error {
-	payment, err := strconv.Atoi(paymentStr)
+	payment, err := strconv.ParseFloat(paymentStr, 64)
 	if err != nil {
-		return err
+		return fmt.Errorf("payment format error1: %s", string(paymentStr))
 	}
 
 	ac, err := stub.GetState(advertiserId)
@@ -243,21 +248,21 @@ func advertiserCharge(stub shim.ChaincodeStubInterface, advertiserId string, pay
 		return err
 	}
 
-	assets, err := strconv.Atoi(account.Assets)
+	assets, err := strconv.ParseFloat(account.Assets, 64)
 	if err != nil {
-		return err
+		return fmt.Errorf("acouont.Assets format error2: %s", string(account.Assets))
 	}
 
 	if assets < payment {
 		return fmt.Errorf("advertiser has not enough Assets")
 	}
-	account.Assets = string(assets - payment)
+	account.Assets = strconv.FormatFloat(assets-payment, 'E', -1, 64)
 
 	accountAsBytes, _ := json.Marshal(account)
 	stub.PutState(advertiserId, accountAsBytes)
 
 	timeStamp := time.Now().Unix()
-	stub.PutState(contractKey+"_freeze", []byte(fmt.Sprintf("%d_%d", timeStamp+86400*7, payment)))
+	stub.PutState(contractKey+"_freeze", []byte(fmt.Sprintf("%d_%f", timeStamp+86400*7, payment)))
 	return nil
 }
 
@@ -271,49 +276,48 @@ func advertiserCharge(stub shim.ChaincodeStubInterface, advertiserId string, pay
 * 6: AntiCheat_Priority
 * 7: PrivateKey
  */
-func generatorContract(stub shim.ChaincodeStubInterface, args []string) error {
+func generatorContract(stub shim.ChaincodeStubInterface, args []string) (string, error) {
 	if len(args) != 8 {
-		return fmt.Errorf("Incorrect arguments. Expecting 8 value")
+		return "", fmt.Errorf("Incorrect arguments. Expecting 8 value")
 	}
-
 	id, err := cid.GetID(stub)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
+		return "", fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
 	}
 	timeStamp := time.Now().Unix()
 	key := fmt.Sprintf("%s_%s_%s_%d", id, args[0], args[1], timeStamp)
 
-	contract := initContract(args[:6], timeStamp, id)
-
+	contract := initContract(args[:7], timeStamp, id)
 	var signatureContract SignatureContract
 	signatureContract.Contract = contract
-
 	contractJson, _ := json.Marshal(contract)
 	signature, err := DSA.Sign(string(contractJson), args[7])
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// 冻结合约金额
 	err = advertiserCharge(stub, id, args[3], key)
 	if err != nil {
-		return err
+		return "", err
 	}
-
-	signatureContract.ContractSignature.Signature[id] = signature
+	var contractSignature ContractSignature
+	contractSignature.Signature = make(map[string][]byte, 0)
+	contractSignature.Signature[id] = signature
+	signatureContract.ContractSignature = contractSignature
 	signatureContractJson, _ := json.Marshal(signatureContract)
 	stub.PutState(key, []byte(signatureContractJson))
 
-    stub.PutState(id+"_confirm", []byte(key))
+	stub.PutState(id+"_confirm", []byte(key))
 	stub.PutState(args[0]+"_confirm", []byte(key))
 	antiCheatIds := strings.Split(args[1], ",")
 	for _, value := range antiCheatIds {
 		stub.PutState(value+"_confirm", []byte(key))
 	}
-	return nil
+	return key, nil
 }
 
-func getAllConfirmContractKey(stub shim.ChaincodeStubInterface) (string, error) {
+func getAllConfirmContractKey(stub shim.ChaincodeStubInterface, args []string) (string, error) {
 	id, err := cid.GetID(stub)
 	if err != nil {
 		return "", fmt.Errorf(fmt.Sprintf("Could not Get ID, err %s", err))
@@ -368,17 +372,17 @@ func mediaAntiConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 		return err
 	}
 
-    signatureContract.ContractSignature.Signature[id] = signature
+	signatureContract.ContractSignature.Signature[id] = signature
 	signatureContractJson, _ := json.Marshal(signatureContract)
-    stub.PutState(args[1], []byte(signatureContractJson))
-    
-    if len(signatureContract.ContractSignature.Signature) == len(signatureContract.Contract.AntiCheatIds) + 2 {
-        stub.PutState(signatureContract.Contract.AdvertiserId+"_contract", []byte(args[1]))
-        stub.PutState(signatureContract.Contract.MediaId+"_contract", []byte(args[1]))
-        for _, value := range signatureContract.Contract.AntiCheatIds {
-            stub.PutState(value+"_contract", []byte(args[1]))
-        }
-    }
+	stub.PutState(args[1], []byte(signatureContractJson))
+
+	if len(signatureContract.ContractSignature.Signature) == len(signatureContract.Contract.AntiCheatIds)+2 {
+		stub.PutState(signatureContract.Contract.AdvertiserId+"_contract", []byte(args[1]))
+		stub.PutState(signatureContract.Contract.MediaId+"_contract", []byte(args[1]))
+		for _, value := range signatureContract.Contract.AntiCheatIds {
+			stub.PutState(value+"_contract", []byte(args[1]))
+		}
+	}
 	return nil
 }
 
@@ -459,7 +463,7 @@ func mediaSubmit(stub shim.ChaincodeStubInterface, args []string) error {
 		return err
 	}
 	contractSignature := ContractSignature{Signature: map[string][]byte{id: signature}}
-	mediaLogSubmit := MediaLogSubmit{Log: log, ContractSignature: contractSignature}
+	mediaLogSubmit := MediaLogSubmit{Log: log, ContractSignature: contractSignature, AntiCheatResultAddress: make(map[string]string, 0)}
 	mls, _ := json.Marshal(mediaLogSubmit)
 	stub.PutState(contractId+"_log", mls)
 	//######
@@ -527,19 +531,24 @@ func anticheatConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 	mediaLogSubmit.ContractSignature.Signature[id] = sig
 
 	//put filelocation
-	mediaLogSubmit.Log.AntiCheatResultAddress = append(mediaLogSubmit.Log.AntiCheatResultAddress, id+"\t"+fileLocation)
-
+	mediaLogSubmit.AntiCheatResultAddress[id] = fileLocation
+    mediaLogSubmitJson, _ := json.Marshal(mediaLogSubmit)
+    stub.PutState(logId, []byte(mediaLogSubmitJson))
 	//if all have signed
-	if mediaLogSubmit.Log.AntiCheatNum == len(mediaLogSubmit.Log.AntiCheatResultAddress) {
-		contractId := strings.Split(logId, "_")[0]
+	if mediaLogSubmit.Log.AntiCheatNum == len(mediaLogSubmit.AntiCheatResultAddress) {
+		contractId := logId[0:len(logId)-4]
 		buf := new(bytes.Buffer)
-		for _, address := range mediaLogSubmit.Log.AntiCheatResultAddress {
-			buf.WriteString(address)
+		for id, address := range mediaLogSubmit.AntiCheatResultAddress {
+			if address==""{
+                return fmt.Errorf("address nil, id is:"+id)
+            }
+            buf.WriteString(id+"\t"+address)
 			buf.WriteString(",")
 		}
 		arg := make([]string, 0)
 		arg = append(arg, contractId)
-		arg = append(arg, buf.String())
+        bufStr :=buf.String()
+		arg = append(arg, bufStr[0:len(bufStr)-1])
 		return settleAccount(stub, arg)
 	}
 	return nil
@@ -555,11 +564,14 @@ func settleAccount(stub shim.ChaincodeStubInterface, args []string) error { //To
 	if err != nil {
 		return err
 	}
-	var sc Contract
+    var sc SignatureContract
 	err = json.Unmarshal(scAsBytes, &sc)
-	antiCheatIds := sc.AntiCheatIds
-	antiCheatPriorityString := sc.AntiCheatPriority
-	//transfer string into float64
+	if err != nil {
+        return err
+    }
+    antiCheatIds := sc.Contract.AntiCheatIds
+	antiCheatPriorityString := sc.Contract.AntiCheatPriority
+    //transfer string into float64
 	var antiCheatPriorityFloat = make([]float64, len(antiCheatPriorityString))
 	for i := 0; i < len(antiCheatPriorityString); i++ {
 		priority, err := strconv.ParseFloat(antiCheatPriorityString[i], 64)
@@ -569,17 +581,29 @@ func settleAccount(stub shim.ChaincodeStubInterface, args []string) error { //To
 		antiCheatPriorityFloat[i] = priority
 	}
 	antiCheatAddressMap, err := getAddressMap(args[1]) //get address map from string
-	if err != nil {
+    if err != nil {
 		return err
 	}
 	var antiCheatResults = make([][]float64, len(antiCheatIds))
 	for i := 0; i < len(antiCheatIds); i++ {
+        value,ok := antiCheatAddressMap[antiCheatIds[i]]
+        if !ok {
+            return fmt.Errorf("not ok: "+antiCheatIds[i])
+        }
+        if value==""{
+            return fmt.Errorf("value null: "+antiCheatIds[i])
+        }
 		antiCheatResult, err := getAntiCheatResult(antiCheatAddressMap[antiCheatIds[i]])
 		if err != nil {
 			return err
 		}
 		antiCheatResults[i] = antiCheatResult
 	}
+    //print middleRes
+    //if len(args) == 2{
+    //    tmp := strconv.FormatFloat(antiCheatResults[0][0], 'f', 6, 64)
+    //    return fmt.Errorf("antiCheatResults[0][0] :"+tmp)
+    //}
 	//count right and wrong judgement for each antiCheat
 	var countArray = make([][2]int, len(antiCheatResults))
 	var realFlow, fakeFlow float64
@@ -603,18 +627,18 @@ func settleAccount(stub shim.ChaincodeStubInterface, args []string) error { //To
 			}
 		}
 	}
-	err = payToMedia(stub, sc, realFlow, fakeFlow)
+	err = payToMedia(stub, sc.Contract, realFlow, fakeFlow)
 	if err != nil {
 		return err
 	}
-	return calculateMoneyAndCredit(stub, countArray, antiCheatIds)
+	return calculateMoneyAndCredit(stub, countArray, antiCheatIds, sc.Contract.PaymentAmountAntiCheat)
 }
 
 func getAddressMap(addressStr string) (map[string]string, error) {
 	strs := strings.Split(addressStr, ",")
 	var addressMap = make(map[string]string, 0)
 	for _, str := range strs {
-		address := strings.Split(str, "\t")
+		address := strings.Split(strings.Replace(str,"\t","    ",-1), "    ")
 		if len(address) < 2 {
 			return nil, fmt.Errorf("address format error")
 		}
@@ -628,15 +652,24 @@ func getAntiCheatResult(address string) ([]float64, error) {
 	if address == "" {
 		return nil, fmt.Errorf("Incorrect arguments. Expecting Address as string")
 	}
-	cmd := "curl " + address
-	output, err := exec.Command("sh", "-c", cmd).Output()
+	//cmd := "curl " + address
+    resp, err := http.Get("http://"+address)
+	//output, err := exec.Command("sh", "-c", cmd).Output()
 	if err != nil {
 		return nil, err
 	}
+    defer resp.Body.Close()
+    output, err := ioutil.ReadAll(resp.Body)
 	strs := strings.Split(string(output), "\n")
+    if strs[len(strs)-1]==""{
+        strs = strs[0:len(strs)-1]
+    }
 	var result = make([]float64, len(strs))
 	for i := 0; i < len(strs); i++ {
-		num, err := strconv.ParseFloat(strings.Split(strs[i], "\t")[1], 64)
+        if len(strings.Split(strs[i], "    "))<2 {
+            continue
+        }
+		num, err := strconv.ParseFloat(strings.Split(strs[i], "    ")[1], 64)
 		if err != nil {
 			return nil, err
 		}
@@ -665,7 +698,8 @@ func payToMedia(stub shim.ChaincodeStubInterface, sc Contract, realFlow float64,
 	}
 	//add or reduce media's credit according to it's performance
 	credit += (realRate - threshold) * amount * MEDIA_CREDIT
-	if realRate >= threshold { //if media meets the demand, pay to media
+	mediaAccount.Credit = strconv.FormatFloat(credit, 'f', 6, 64)
+    if realRate >= threshold { //if media meets the demand, pay to media
 		assets, err := strconv.ParseFloat(mediaAccount.Assets, 64)
 		if err != nil {
 			return err
@@ -682,7 +716,7 @@ func payToMedia(stub shim.ChaincodeStubInterface, sc Contract, realFlow float64,
 	return nil
 }
 
-func calculateMoneyAndCredit(stub shim.ChaincodeStubInterface, countArray [][2]int, antiCheatIds []string) error {
+func calculateMoneyAndCredit(stub shim.ChaincodeStubInterface, countArray [][2]int, antiCheatIds []string, money string) error {
 	var sum float64
 	for _, num := range countArray {
 		sum += float64(num[0])
@@ -698,7 +732,11 @@ func calculateMoneyAndCredit(stub shim.ChaincodeStubInterface, countArray [][2]i
 		if err != nil {
 			return err
 		}
-		assets += float64(countArray[i][0]) / sum
+        moneyFloat,err := strconv.ParseFloat(money, 64)
+        if err != nil {
+            return err
+        }
+        assets += float64(countArray[i][0]) / sum * moneyFloat
 		account.Assets = strconv.FormatFloat(assets, 'E', -1, 64)
 		//calculate anticheat credit
 		credit, err := strconv.ParseFloat(account.Credit, 64)
@@ -726,6 +764,14 @@ func calculateCredit(countArray [][2]int) []float64 {
 		pointArray[i] -= avg
 	}
 	return pointArray
+}
+
+func getAccount(stub shim.ChaincodeStubInterface, args []string) (string, error) {
+	if len(args) != 1 {
+		return "", fmt.Errorf("Incorrect arguments. Expecting 1 argument")
+	}
+	accountAsBytes, err := stub.GetState(args[0])
+	return string(accountAsBytes), err
 }
 
 func getAccountInfo(stub shim.ChaincodeStubInterface, id string) (Account, error) {

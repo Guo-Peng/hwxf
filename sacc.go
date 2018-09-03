@@ -542,7 +542,8 @@ func anticheatConfirm(stub shim.ChaincodeStubInterface, args []string) error {
 		}
 		arg := make([]string, 0)
 		arg = append(arg, contractId)
-		arg = append(arg, buf.String())
+        bufStr :=buf.String()
+		arg = append(arg, bufStr[0:len(bufStr)-1])
 		return settleAccount(stub, arg)
 	}
 	return nil
@@ -610,7 +611,7 @@ func settleAccount(stub shim.ChaincodeStubInterface, args []string) error { //To
 	if err != nil {
 		return err
 	}
-	return calculateMoneyAndCredit(stub, countArray, antiCheatIds)
+	return calculateMoneyAndCredit(stub, countArray, antiCheatIds, sc.PaymentAmountAntiCheat)
 }
 
 func getAddressMap(addressStr string) (map[string]string, error) {
@@ -637,9 +638,15 @@ func getAntiCheatResult(address string) ([]float64, error) {
 		return nil, err
 	}
 	strs := strings.Split(string(output), "\n")
+    if strs[len(strs)-1]==""{
+        strs = strs[0:len(strs)-1]
+    }
 	var result = make([]float64, len(strs))
 	for i := 0; i < len(strs); i++ {
-		num, err := strconv.ParseFloat(strings.Split(strs[i], "\t")[1], 64)
+        if len(strings.Split(strs[i], "    "))<2 {
+            continue
+        }
+		num, err := strconv.ParseFloat(strings.Split(strs[i], "    ")[1], 64)
 		if err != nil {
 			return nil, err
 		}
@@ -668,7 +675,8 @@ func payToMedia(stub shim.ChaincodeStubInterface, sc Contract, realFlow float64,
 	}
 	//add or reduce media's credit according to it's performance
 	credit += (realRate - threshold) * amount * MEDIA_CREDIT
-	if realRate >= threshold { //if media meets the demand, pay to media
+	mediaAccount.Credit = strconv.FormatFloat(credit, 'f', 6, 64)
+    if realRate >= threshold { //if media meets the demand, pay to media
 		assets, err := strconv.ParseFloat(mediaAccount.Assets, 64)
 		if err != nil {
 			return err
@@ -685,7 +693,7 @@ func payToMedia(stub shim.ChaincodeStubInterface, sc Contract, realFlow float64,
 	return nil
 }
 
-func calculateMoneyAndCredit(stub shim.ChaincodeStubInterface, countArray [][2]int, antiCheatIds []string) error {
+func calculateMoneyAndCredit(stub shim.ChaincodeStubInterface, countArray [][2]int, antiCheatIds []string, money string) error {
 	var sum float64
 	for _, num := range countArray {
 		sum += float64(num[0])
@@ -701,7 +709,11 @@ func calculateMoneyAndCredit(stub shim.ChaincodeStubInterface, countArray [][2]i
 		if err != nil {
 			return err
 		}
-		assets += float64(countArray[i][0]) / sum
+        moneyFloat,err := strconv.ParseFloat(money, 64)
+        if err != nil {
+            return err
+        }
+        assets += float64(countArray[i][0]) / sum * moneyFloat
 		account.Assets = strconv.FormatFloat(assets, 'E', -1, 64)
 		//calculate anticheat credit
 		credit, err := strconv.ParseFloat(account.Credit, 64)

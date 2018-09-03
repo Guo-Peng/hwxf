@@ -8,7 +8,9 @@ import (
 	"github.com/hyperledger/fabric/core/chaincode/lib/cid"
 	"github.com/hyperledger/fabric/core/chaincode/shim"
 	"github.com/hyperledger/fabric/protos/peer"
-	"os/exec"
+	//"os/exec"
+    "net/http"
+    "io/ioutil"
 	"strconv"
 	"strings"
 	"time"
@@ -534,10 +536,13 @@ func anticheatConfirm(stub shim.ChaincodeStubInterface, args []string) error {
     stub.PutState(logId, []byte(mediaLogSubmitJson))
 	//if all have signed
 	if mediaLogSubmit.Log.AntiCheatNum == len(mediaLogSubmit.AntiCheatResultAddress) {
-		contractId := strings.Split(logId, "_")[0]
+		contractId := logId[0:len(logId)-4]
 		buf := new(bytes.Buffer)
 		for id, address := range mediaLogSubmit.AntiCheatResultAddress {
-			buf.WriteString(id+"\t"+address)
+			if address==""{
+                return fmt.Errorf("address nil, id is:"+id)
+            }
+            buf.WriteString(id+"\t"+address)
 			buf.WriteString(",")
 		}
 		arg := make([]string, 0)
@@ -559,11 +564,14 @@ func settleAccount(stub shim.ChaincodeStubInterface, args []string) error { //To
 	if err != nil {
 		return err
 	}
-	var sc Contract
+    var sc SignatureContract
 	err = json.Unmarshal(scAsBytes, &sc)
-	antiCheatIds := sc.AntiCheatIds
-	antiCheatPriorityString := sc.AntiCheatPriority
-	//transfer string into float64
+	if err != nil {
+        return err
+    }
+    antiCheatIds := sc.Contract.AntiCheatIds
+	antiCheatPriorityString := sc.Contract.AntiCheatPriority
+    //transfer string into float64
 	var antiCheatPriorityFloat = make([]float64, len(antiCheatPriorityString))
 	for i := 0; i < len(antiCheatPriorityString); i++ {
 		priority, err := strconv.ParseFloat(antiCheatPriorityString[i], 64)
@@ -573,17 +581,29 @@ func settleAccount(stub shim.ChaincodeStubInterface, args []string) error { //To
 		antiCheatPriorityFloat[i] = priority
 	}
 	antiCheatAddressMap, err := getAddressMap(args[1]) //get address map from string
-	if err != nil {
+    if err != nil {
 		return err
 	}
 	var antiCheatResults = make([][]float64, len(antiCheatIds))
 	for i := 0; i < len(antiCheatIds); i++ {
+        value,ok := antiCheatAddressMap[antiCheatIds[i]]
+        if !ok {
+            return fmt.Errorf("not ok: "+antiCheatIds[i])
+        }
+        if value==""{
+            return fmt.Errorf("value null: "+antiCheatIds[i])
+        }
 		antiCheatResult, err := getAntiCheatResult(antiCheatAddressMap[antiCheatIds[i]])
 		if err != nil {
 			return err
 		}
 		antiCheatResults[i] = antiCheatResult
 	}
+    //print middleRes
+    //if len(args) == 2{
+    //    tmp := strconv.FormatFloat(antiCheatResults[0][0], 'f', 6, 64)
+    //    return fmt.Errorf("antiCheatResults[0][0] :"+tmp)
+    //}
 	//count right and wrong judgement for each antiCheat
 	var countArray = make([][2]int, len(antiCheatResults))
 	var realFlow, fakeFlow float64
@@ -607,18 +627,18 @@ func settleAccount(stub shim.ChaincodeStubInterface, args []string) error { //To
 			}
 		}
 	}
-	err = payToMedia(stub, sc, realFlow, fakeFlow)
+	err = payToMedia(stub, sc.Contract, realFlow, fakeFlow)
 	if err != nil {
 		return err
 	}
-	return calculateMoneyAndCredit(stub, countArray, antiCheatIds, sc.PaymentAmountAntiCheat)
+	return calculateMoneyAndCredit(stub, countArray, antiCheatIds, sc.Contract.PaymentAmountAntiCheat)
 }
 
 func getAddressMap(addressStr string) (map[string]string, error) {
 	strs := strings.Split(addressStr, ",")
 	var addressMap = make(map[string]string, 0)
 	for _, str := range strs {
-		address := strings.Split(str, "\t")
+		address := strings.Split(strings.Replace(str,"\t","    ",-1), "    ")
 		if len(address) < 2 {
 			return nil, fmt.Errorf("address format error")
 		}
@@ -632,11 +652,14 @@ func getAntiCheatResult(address string) ([]float64, error) {
 	if address == "" {
 		return nil, fmt.Errorf("Incorrect arguments. Expecting Address as string")
 	}
-	cmd := "curl " + address
-	output, err := exec.Command("sh", "-c", cmd).Output()
+	//cmd := "curl " + address
+    resp, err := http.Get("http://"+address)
+	//output, err := exec.Command("sh", "-c", cmd).Output()
 	if err != nil {
 		return nil, err
 	}
+    defer resp.Body.Close()
+    output, err := ioutil.ReadAll(resp.Body)
 	strs := strings.Split(string(output), "\n")
     if strs[len(strs)-1]==""{
         strs = strs[0:len(strs)-1]
